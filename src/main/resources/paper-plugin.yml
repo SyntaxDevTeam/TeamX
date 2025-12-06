@@ -1,0 +1,45 @@
+name: TeamX
+version: ${version}
+description: ${description}
+api-version: '1.20'
+folia-supported: true
+
+authors: [SyntaxDevTeam]
+website: https://github.com/SyntaxDevTeam/TeamX
+support:
+  issues: https://github.com/SyntaxDevTeam/TeamX/issues
+  updates: https://github.com/SyntaxDevTeam/TeamX/releases
+
+localization:
+  available: [en_US, pl_PL, fr_FR, es_ES, de_DE]
+  default: en_US
+
+main: pl.syntaxdevteam.teamx.TeamX
+loader: pl.syntaxdevteam.teamx.loader.SyntaxLoader
+has-open-classloader: false
+
+softdepend: [Folia, CleanerX]
+
+dependencies:
+  server:
+    PlaceholderAPI: # czy jak się to nazywa
+      load: BEFORE
+      required: false
+    MiniPlaceholders:
+      load: BEFORE
+      required: false
+    LuckPerms:
+      load: BEFORE
+      required: false
+    Vault:
+      load: BEFORE
+      required: false
+    VaultUnlocked:
+      load: BEFORE
+      required: false
+    CleanerX:
+      load: BEFORE
+      required: false
+
+features:
+  debug: true

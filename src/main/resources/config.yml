@@ -1,0 +1,104 @@
+### Config version 1.0.0
+
+# Default format for new added teams
+default-format: "&8&l"
+
+# Set text length limits for team name and description
+team:
+  max-name-length: 16
+  max-description-length: 64
+
+GUI:
+  # GUI settings with format or color selection
+  colors:
+    material: PURPLE_WOOL # Any blocks are available
+    index: 11 # Index of the item in the GUI
+    title: "§a§lChoose your color"
+  format:
+    material: GLOW_INK_SAC # Any blocks are available
+    index: 15 # Index of the item in the GUI
+    title: "§a§lChoose your format"
+  save:
+    material: EMERALD_BLOCK # Any blocks are available
+    index: 48 # Index of the item in the GUI
+    title: "§a§lSave now"
+  back:
+    material: REDSTONE_BLOCK # Any blocks are available
+    index: 50 # Index of the item in the GUI
+    title: "§a§Back"
+  # Color Selection GUI Settings
+  item_colors:
+    material: WOOL # Any coloured blocks are available e.g. wool, carpet etc.
+  # Format Selection GUI Settings
+  item_formats:
+    boldItem:
+      material: PAPER # Any blocks are available
+      index: 11 # Index of the item in the GUI
+      title: "§lBold"
+    italicItem:
+      material: FEATHER # Any blocks are available
+      index: 13 # Index of the item in the GUI
+      title: "§oItalic"
+    underlineItem:
+      material: STRING # Any blocks are available
+      index: 15 # Index of the item in the GUI
+      title: "§nUnderline"
+    strikethroughItem:
+      material: BARRIER # Any blocks are available
+      index: 29 # Index of the item in the GUI
+      title: "§mStrikethrough"
+    clearFormatItem:
+      material: MILK_BUCKET # Any blocks are available
+      index: 31 # Index of the item in the GUI
+      title: "§rClear format"
+  UseMiniMessage: false # If the value is true, the MiniMessage format will be used, otherwise the Legacy format will be used
+
+# Available placeholders in the plugin:
+# %teamx_name% - Team name
+# %teamx_format% - Team format
+# %teamx_leader% - Nickname of the team leader
+# %teamx_member_count% - Number of team members
+# %teamx_members% - List of team members
+# %teamx_description% - Team description
+# %teamx_created_at% - Date of team creation
+# %teamx_power% - Team power
+# %teamx_full_team% - Full team format (Recommended in chat formating plugin)
+# Example: "{prefix} | %teamx_full_team%<reset> | {name}: {message}"
+
+# Settings for the placeholders
+Placeholders:
+  only_uuid: false # If the value is true, the UUID will be displayed instead of the player's nickname in the placeholder
+  # TODO: show_uuid: false # If the value is true, the player's UUID will be displayed next to the team leader's nickname in the placeholder
+  # Settings for how the member list is displayed in the placeholder
+  members_format: newline # Available options: newline, comma
+  # Settings for how the team format is displayed in the placeholder
+  # Available format placeholders: {team_name}, {full_name}, {format}, {leader}, {member_count}, {members}, {description}, {created_at}, {power}
+  chat_format:
+    solo: "<gray>Solo</gray>"
+    team: "<hover:show_text:'{full_name}<reset><newline><newline><b>Leader: </b>{leader}<newline><b>Team count: </b>{member_count}<newline><b>Team members list:</b> {leader}, {members}'>{format}{team_name}</hover>"
+
+# Settings for connecting to the database
+database:
+  # Available options: mariadb, mysql, postgresql, sqlite, h2
+  type: "sqlite"
+  sql:
+    host: "localhost"
+    port: 3306 # 5432 if you use PostgreSQL default for MySQL is 3306
+    dbname: "my_database"
+    username: "root"
+    password: "password"
+
+# Plugin language selection. Possible values:  EN, PL, ES, FR, DE
+# If you would like to add your own language file, please contact us on Discord (https://discord.gg/Zk6mxv7eMh).
+language: "EN"
+
+# Update check and auto-update settings
+checkForUpdates: true
+autoDownloadUpdates: false
+
+# Debug mode set to true provides more detailed logs in the console
+debug: false
+
+# Should StatsCollector be enabled? Recommended setting: true
+stats:
+  enabled: true

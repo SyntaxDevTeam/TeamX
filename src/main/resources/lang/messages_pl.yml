@@ -1,0 +1,74 @@
+# Ver. 1.0.0
+# Formatowanie tekstów wiadomości:
+# Można używać formatowania MiniMessage oraz Legacy (Minecraft).
+# Przykłady jak stosować MiniMessage: https://docs.advntr.dev/minimessage/format.html
+# Nie mieszaj formatów w jednej wiadomości. Jeśli używasz Legacy, nie wstawiaj formatowania MiniMessage, w przeciwnym wypadku zostanie użyty tylko ten drugi.
+# Dozwolone mieszanie typów formatowania jest wyłącznie w przypadku używania pluginu FormatterX od SyntaxDevTeam ;)
+
+prefix: "<gradient:#00d1d1:#22667d:#00aaaa:#22667d:#00d1d1>[<b>TeamX</b>]</gradient>"
+
+# Wiadomości obsługi błędów
+error:
+  no_permission: "<red>Nie masz uprawnień do tej komendy.</red>"
+  player_not_found: "<gold>Nie znaleziono gracza o nicku {player}.</gold>"
+  no_have_team: "<red>Nie posiadasz drużyny.</red>"
+  not_found: "<red>Nie znaleziono drużyny o nazwie {team_name}.</red>"
+  player_already_in_team: "<red>Gracz {player} jest już w drużynie.</red>"
+  already_in_team: "<red>Jesteś już w drużynie.</red>"
+  player_not_in_team: "<red>Gracz {player} nie jest w drużynie.</red>"
+  name_too_long: "<red>Nazwa drużyny jest zbyt długa. Nazwa nie może być dłuższa niż {limit} znaków</red>"
+  banned_word: "<red>Używaj przyzwoitych nazw!</red>"
+  console: "<red>Tylko gracz może użyć tej komendy</red>"
+
+reload:
+  success: "<green>Przeładowano konfigurację.</green>"
+  fail: "<red>Nie udało się przeładować konfiguracji.</red>"
+
+team:
+  create_usage: "<green>Poprawne użycie to: <gold>/team create <team_name> <team_description></gold>"
+  create_exists: "<red>Drużyna o nazwie {team_name} już istnieje.</red>"
+  created: "<green>Stworzono drużynę {team_name}.</green>"
+  rename_usage: "<green>Poprawne użycie to: <gold>/team rename <new_team_name></gold>"
+  rename_exists: "<red>Drużyna o nazwie {team_name} już istnieje.</red>"
+  renamed: "<green>Zmieniono nazwę drużyny na {team_name}.</green>"
+  rename_failed: "<red>Nie udało się zmienić nazwy drużyny.</red>"
+  description_usage: "<green>Poprawne użycie to: <gold>/team description <team_description></gold>"
+  description_updated: "<green>Zaktualizowano opis drużyny.</green>"
+  deleted: "<red>Twoja drużyna {team_name} została usunięta.</red>"
+  not_team_owner: "<red>Nie jesteś liderem drużyny, aby wykonać to polecenie.</red>"
+  delete_failed: "<red>Nie udało się usunąć drużyny {team_name}.</red>"
+  admin_usage: "<green>Poprawne użycie to: <gold>/team admin adduser <team_name> <player></gold>"
+  player_added: "<green>Dodano gracza {player} do drużyny {team_name}.</green>"
+  add_failed: "<red>Nie udało się dodać gracza {player} do drużyny {team_name}.</red>"
+  kick_usage: "<green>Poprawne użycie to: <gold>/team kick <player_name></gold>"
+  player_removed: "<green>Usunięto gracza {player} z drużyny {team_name}.</green>"
+  you_kicked: "<red>Zostałeś wyrzucony z drużyny {team_name}.</red>"
+  remove_failed: "<red>Nie udało się usunąć gracza {player} z drużyny {team_name}.</red>"
+  player_leaved: "<green>Opuszczono drużynę {team_name}.</green>"
+  leave_failed: "<red>Nie udało się opuścić drużyny {team_name}.</red>"
+
+invitation:
+  usage: "<green>Poprawne użycie to: <gold>/team invite <player_name></gold>"
+  received: "<white>Otrzymałeś zaproszenie do drużyny od <b>{leader}</b>. Kliknij <click:run_command:'/team accept'><green>[Akceptuj]</green></click> lub <click:run_command:'/team deny'><red>[Odrzuć]</red></click>"
+  # received: "<white>Otrzymałeś zaproszenie do drużyny od <b>{leader}</b>. Wpisz <gold>/team accept</gold> aby przyjąć lub <gold>/team deny</gold> aby odrzucić"
+  sent: "<green>Wysłano zaproszenie do gracza {player}.</green>"
+  sent_failed: "<red>Nie udało się wysłać zaproszenia do gracza {player}.</red>"
+  accepted: "<green>Zaproszenie zaakceptowane! Dołączasz do drużyny {team_name}.</green>"
+  denied: "<red>Zaproszenie odrzucone.</red>"
+  player_accepted: "<green>Gracz {player} zaakceptował zaproszenie.</green>"
+  player_denied: "<red>Gracz {player} odrzucił zaproszenie.</red>"
+  already_invited: "<red>Gracz {player} już otrzymał zaproszenie do drużyny.</red>"
+  expired: "<red>Twoje zaproszenie do drużyny wygasło.</red>"
+  no_invitation: "<red>Nie masz aktywnego zaproszenia.</red>"
+  kick: "<red>Zostałeś wyrzucony z drużyny.</red>"
+
+GUI:
+  title_initialGUI: "Wybierz opcję"
+  title_colorGUI: "Wybierz kolor"
+  title_formatGUI: "Wybierz format"
+  saved: "<green>Zapisano formatowanie</green>"
+  return: "<green>Wracasz do poprzedniego okna...</green>"
+  opening_color: "<green>Otwieranie wyboru koloru...</green>"
+  color_selected: "<green>Kolor został wybrany...</green>"
+  opening_format: "<green>Otwieranie wyboru formatu...</green>"
+  format_selected: "<green>Format został  wybrany</green>"
