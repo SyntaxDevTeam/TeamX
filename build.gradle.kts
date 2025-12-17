@@ -1,27 +1,37 @@
 plugins {
-    kotlin("jvm") version "2.2.21"
-    id("com.gradleup.shadow") version "9.2.2"
-    id("xyz.jpenilla.run-paper") version "2.3.1"
+    kotlin("jvm") version "2.3.0"
+    id("com.gradleup.shadow") version "9.3.0"
+    `maven-publish`
+    id("io.papermc.hangar-publish-plugin") version "0.1.3"
+    id("xyz.jpenilla.run-paper") version "3.0.2"
+    id("pl.syntaxdevteam.plugindeployer") version "1.0.2"
 }
 
 group = "pl.syntaxdevteam"
-version = "1.1.4-DEV"
+version = "1.0.0-SNAPSHOT"
 description = ""
 
+val targetJavaVersion = 21
+kotlin {
+    jvmToolchain(targetJavaVersion)
+}
+
 repositories {
+    maven("https://nexus.syntaxdevteam.pl/repository/maven-snapshots/") //SyntaxDevTeam
+    maven("https://nexus.syntaxdevteam.pl/repository/maven-releases/") //SyntaxDevTeam
+    gradlePluginPortal()
     mavenCentral()
     maven("https://repo.papermc.io/repository/maven-public/") {
-        name = "papermc-repo"
+        name = "papermc"
     }
     maven("https://oss.sonatype.org/content/groups/public/") {
         name = "sonatype"
     }
-    maven("https://repo.extendedclip.com/releases/")
-    maven("https://jitpack.io")
-    maven("https://repo.codemc.org/repository/maven-public")
-    maven("https://nexus.syntaxdevteam.pl/repository/maven-releases/") {
-        name = "syntaxdevteam-releases"
-    }
+    maven("https://repo.menthamc.org/repository/maven-public/")
+    maven("https://repo.extendedclip.com/releases/") // PlaceholderAPI
+    maven("https://repo.codemc.org/repository/maven-public/") // VaultUnlockedAPI
+    maven("https://jitpack.io") // VaultAPI
+    maven("https://repo.essentialsx.net/releases/") // EssentialsX
 }
 
 dependencies {
@@ -48,20 +58,16 @@ dependencies {
     compileOnly("pl.syntaxdevteam.punisher:PunisherX:1.4.1")
 }
 
-val targetJavaVersion = 21
-kotlin {
-    jvmToolchain(targetJavaVersion)
-}
 
 tasks {
+    build {
+        dependsOn(shadowJar)
+    }
     runServer {
         minecraftVersion("1.21.10")
-        runDirectory(file("run/latest"))
+        runDirectory(file("run/paper"))
     }
-
-    build {
-        dependsOn("shadowJar")
-    }
+    runPaper.folia.registerTask()
 }
 
 tasks.processResources {
@@ -71,4 +77,16 @@ tasks.processResources {
     filesMatching("paper-plugin.yml") {
         expand(props)
     }
+}
+
+tasks.shadowJar {
+    archiveBaseName.set("TeamX")
+    archiveClassifier.set("")
+    archiveVersion.set(project.version.toString())
+    mergeServiceFiles()
+}
+
+plugindeployer {
+    paper { dir = "/home/debian/poligon/Paper/1.21.11/plugins" } //ostatnia wersja dla Paper
+    folia { dir = "/home/debian/poligon/Folia/1.21.8/plugins" } //ostatnia wersja dla Folia
 }

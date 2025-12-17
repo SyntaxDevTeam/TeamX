@@ -7,6 +7,7 @@ import org.eclipse.aether.artifact.DefaultArtifact
 import org.eclipse.aether.graph.Dependency
 import org.eclipse.aether.repository.RemoteRepository
 import org.yaml.snakeyaml.Yaml
+import pl.syntaxdevteam.punisher.loader.SyntaxLoader
 import java.io.IOException
 import java.io.InputStream
 
@@ -19,7 +20,12 @@ class SyntaxLoader : PluginLoader {
         resolveLibraries().map { DefaultArtifact(it) }
             .forEach { artifact -> resolver.addDependency(Dependency(artifact, null)) }
 
+        resolver.addRepository(RemoteRepository.Builder("syntaxdevteam-snapshots", "default", "https://nexus.syntaxdevteam.pl/repository/maven-snapshots/").build())
+        resolver.addRepository(RemoteRepository.Builder("syntaxdevteam-releases", "default", "https://nexus.syntaxdevteam.pl/repository/maven-releases/").build())
         resolver.addRepository(RemoteRepository.Builder("paper", "default", "https://repo.papermc.io/repository/maven-public/").build())
+        resolver.addRepository(RemoteRepository.Builder("central-mirror", "default", "https://repo.papermc.io/repository/maven-central/").build())
+        resolver.addRepository(RemoteRepository.Builder("jitpack", "default", "https://jitpack.io/").build())
+        resolver.addRepository(RemoteRepository.Builder("codemc-snapshots", "default", "https://repo.codemc.io/repository/maven-snapshots/").build())
         pluginClasspath.addLibrary(resolver)
     }
 
