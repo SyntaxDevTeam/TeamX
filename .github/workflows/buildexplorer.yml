@@ -29,7 +29,7 @@ env:
 jobs:
   verify:
     name: Verify repository
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, syntaxdev-ci]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,7 +47,7 @@ jobs:
 
   publish:
     name: Publish teamx / paper
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, syntaxdev-ci]
     needs: verify
     if: github.event_name != 'pull_request'
     steps:
