@@ -1,463 +1,453 @@
 package pl.syntaxdevteam.teamx.commands
 
-import pl.syntaxdevteam.teamx.messages.teamMessage
-import io.papermc.paper.command.brigadier.BasicCommand
+import com.mojang.brigadier.arguments.IntegerArgumentType
+import com.mojang.brigadier.arguments.StringArgumentType
+import com.mojang.brigadier.builder.LiteralArgumentBuilder
+import com.mojang.brigadier.builder.RequiredArgumentBuilder
+import com.mojang.brigadier.context.CommandContext
+import com.mojang.brigadier.suggestion.SuggestionsBuilder
 import io.papermc.paper.command.brigadier.CommandSourceStack
+import io.papermc.paper.command.brigadier.Commands
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
-import org.jetbrains.annotations.NotNull
 import pl.syntaxdevteam.teamx.TeamX
 import pl.syntaxdevteam.teamx.basic.TextSanitizer
 import pl.syntaxdevteam.teamx.gui.InitialSelectionGUI
 import pl.syntaxdevteam.teamx.hooks.CleanerXHook
 import pl.syntaxdevteam.teamx.hooks.PlotsXHook
+import pl.syntaxdevteam.teamx.messages.teamMessage
 
-class TeamCommand(private val plugin: TeamX) : BasicCommand {
+@Suppress("UnstableApiUsage")
+class TeamCommand(private val plugin: TeamX) {
     private val mH get() = plugin.messageHandler
     private val db get() = plugin.databaseHandler
     private val maxNameLength get() = plugin.config.getInt("team.max-name-length", 16)
 
-    override fun execute(@NotNull stack: CommandSourceStack, @NotNull args: Array<String>) {
-        if (!plugin.isEnabled) return
-        val sender = stack.sender
+    fun build() = Commands.literal("team")
+        .requires { plugin.isEnabled && it.sender.hasPermission("teamx.cmd.team") }
+        .executes {
+            sendHelp(it.source.sender, 1)
+            1
+        }
+        .then(Commands.literal("help")
+            .requires { it.sender.hasPermission("teamx.cmd.team.help") }
+            .executes {
+                sendHelp(it.source.sender, 1)
+                1
+            }
+            .then(Commands.argument("page", IntegerArgumentType.integer())
+                .executes {
+                    sendHelp(it.source.sender, IntegerArgumentType.getInteger(it, "page"))
+                    1
+                }))
+        .then(Commands.literal("plots")
+            .executes { runAsPlayer(it) { player -> showPlots(player, 1) } }
+            .then(Commands.argument("page", IntegerArgumentType.integer())
+                .executes { context ->
+                    runAsPlayer(context) { showPlots(it, IntegerArgumentType.getInteger(context, "page")) }
+                }))
+        .then(premium("create")
+            .executes { usage(it, "team", "create_usage") }
+            .then(Commands.argument("name", StringArgumentType.string())
+                .executes { context -> runAsPlayer(context) { createTeam(it, text(context, "name"), "") } }
+                .then(Commands.argument("description", StringArgumentType.greedyString())
+                    .executes { context ->
+                        runAsPlayer(context) { createTeam(it, text(context, "name"), text(context, "description")) }
+                    })))
+        .then(premium("rename")
+            .executes { usage(it, "team", "rename_usage") }
+            .then(Commands.argument("name", StringArgumentType.string())
+                .executes { context -> runAsPlayer(context) { renameTeam(it, text(context, "name")) } }))
+        .then(premium("description")
+            .executes { usage(it, "team", "description_usage") }
+            .then(Commands.argument("description", StringArgumentType.greedyString())
+                .executes { context -> runAsPlayer(context) { updateDescription(it, text(context, "description")) } }))
+        .then(premium("format").executes { runAsPlayer(it, ::openFormatMenu) })
+        .then(premium("delete").executes { runAsPlayer(it, ::deleteTeam) })
+        .then(premium("kick")
+            .executes { usage(it, "team", "kick_usage") }
+            .then(playerArgument().executes { context -> runAsPlayer(context) { kickPlayer(it, text(context, "player")) } }))
+        .then(premium("invite")
+            .executes { usage(it, "invitation", "usage") }
+            .then(playerArgument().executes { context -> runAsPlayer(context) { invitePlayer(it, text(context, "player")) } }))
+        .then(basic("accept").executes { runAsPlayer(it, ::acceptInvitation) })
+        .then(basic("deny").executes { runAsPlayer(it, ::declineInvitation) })
+        .then(basic("leave").executes { runAsPlayer(it, ::leaveTeam) })
+        .then(admin())
+        .build()
 
-        if (!stack.sender.hasPermission("teamx.cmd.team")) {
-            stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-            return
+    private fun admin() = Commands.literal("admin")
+        .requires { it.sender.hasPermission("teamx.cmd.team.admin") }
+        .executes(::adminUsage)
+        .then(adminPlayerCommand("adduser", ::adminAddPlayer))
+        .then(adminPlayerCommand("removeuser", ::adminRemovePlayer))
+        .then(adminPlayerCommand("setleader", ::adminSetLeader))
+        .then(Commands.literal("rename")
+            .executes(::adminUsage)
+            .then(teamArgument().executes(::adminUsage)
+                .then(Commands.argument("name", StringArgumentType.string())
+                    .executes { context ->
+                        withTeam(context) { sender, id, _ -> adminRenameTeam(sender, id, text(context, "name")) }
+                    })))
+        .then(Commands.literal("delete")
+            .executes(::adminUsage)
+            .then(teamArgument().executes { withTeam(it, ::adminDeleteTeam) }))
+
+    private fun adminPlayerCommand(
+        name: String,
+        action: (CommandSender, Int, String, String) -> Unit
+    ) = Commands.literal(name)
+        .executes(::adminUsage)
+        .then(teamArgument().executes(::adminUsage)
+            .then(playerArgument().executes { context ->
+                withTeam(context) { sender, id, team -> action(sender, id, team, text(context, "player")) }
+            }))
+
+    private fun premium(name: String) = permitted(name, "teamx.cmd.team.premium")
+
+    private fun basic(name: String) = permitted(name, "teamx.cmd.basic")
+
+    private fun permitted(name: String, groupPermission: String): LiteralArgumentBuilder<CommandSourceStack> =
+        Commands.literal(name).requires {
+            it.sender.hasPermission(groupPermission) || it.sender.hasPermission("teamx.cmd.team.$name")
         }
 
-        if (args.isEmpty()) {
-            val page = args.getOrNull(1)?.toIntOrNull() ?: 1
-            sendHelp(stack, page)
-            return
+    private fun playerArgument(): RequiredArgumentBuilder<CommandSourceStack, String> =
+        Commands.argument("player", StringArgumentType.string()).suggests { _, builder ->
+            suggestNames(builder, plugin.server.onlinePlayers.map { it.name })
         }
 
-        when (args[0].lowercase()) {
-            "admin" -> return executeAdmin(stack, args)
-            "help" -> {
-                if (!sender.hasPermission("teamx.cmd.team.help")) {
-                    sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-                return sendHelp(stack, args.getOrNull(1)?.toIntOrNull() ?: 1)
-            }
+    private fun teamArgument(): RequiredArgumentBuilder<CommandSourceStack, String> =
+        Commands.argument("team", StringArgumentType.string()).suggests { _, builder ->
+            suggestNames(builder, db.getTeamList())
         }
-        if (sender !is Player) {
-            sender.sendMessage(mH.teamMessage("error", "console"))
-            return
-        }
-        val uuid = sender.uniqueId
 
-        when {
-            args[0].equals("plots", ignoreCase = true) -> {
-                val plots = PlotsXHook.visitablePlots(uuid)
-                if (plots == null) {
-                    sender.sendMessage(mH.teamMessage("plots", "unavailable"))
-                    return
-                }
-                if (plots.isEmpty()) {
-                    sender.sendMessage(mH.teamMessage("plots", "empty"))
-                    return
-                }
-                val pageSize = 10
-                val pages = (plots.size - 1) / pageSize + 1
-                val page = (args.getOrNull(1)?.toIntOrNull() ?: 1).coerceIn(1, pages)
-                sender.sendMessage(mH.teamMessage("plots", "page", mapOf("page" to "$page", "pages" to "$pages")))
-                plots.asSequence().drop((page - 1) * pageSize).take(pageSize).forEach(sender::sendMessage)
-            }
-            args[0].equals("create", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.create"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-                if (args.size < 2) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "create_usage"))
-                    return
-                }
+    private fun suggestNames(builder: SuggestionsBuilder, names: Iterable<String>) =
+        builder.apply {
+            val prefix = remaining.removePrefix("\"").removePrefix("'")
+            names.filter { it.startsWith(prefix, ignoreCase = true) }
+                .forEach { suggest(StringArgumentType.escapeIfRequired(it)) }
+        }.buildFuture()
 
-                val cleanName = validateTeamName(sender, args[1]) ?: return
-                if (db.isTeamNameExists(cleanName)) {
-                    sender.sendMessage(mH.teamMessage("team", "create_exists", mapOf("team_name" to cleanName)))
-                    return
-                }
+    private fun text(context: CommandContext<CommandSourceStack>, name: String): String =
+        StringArgumentType.getString(context, name)
 
-                val existingTeam = db.getTeamByUUID(uuid.toString())
-                if (existingTeam != null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "already_in_team"))
-                    return
-                }
-
-                val description: String = args.slice(2 until args.size).joinToString(" ")
-                if (!db.addTeam(cleanName, uuid.toString(), description)) {
-                    sender.sendMessage(mH.teamMessage("team", "create_failed"))
-                    return
-                }
-                stack.sender.sendMessage(mH.teamMessage("team", "created", mapOf("team_name" to cleanName)))
-                plugin.logger.debug("Player ${stack.sender.name} created a team:")
-                plugin.logger.debug("Description: $description")
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-
-            }
-            args[0].equals("rename", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.rename"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-                if (args.size < 2) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "rename_usage"))
-                    return
-                }
-                val newName = validateTeamName(sender, args[1]) ?: return
-                val teamData = db.getTeamByUUID(uuid.toString())
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-                    return
-                }
-                val teamId = teamData[0].toInt()
-                if (db.isTeamNameExists(newName)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "rename_exists"))
-                    return
-                }
-                if (db.updateTeamName(teamId, newName)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "renamed", mapOf("team_name" to newName)))
-                    plugin.logger.debug("Team ID $teamId has been renamed to $newName")
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "rename_failed"))
-                }
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-            }
-            args[0].equals("description", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.description"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-                if (args.size < 2) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "description_usage"))
-                    return
-                }
-                val description: String = args.slice(1 until args.size).joinToString(" ")
-                val teamData = db.getTeamByUUID(uuid.toString())
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-                    return
-                }
-                val teamId = teamData[0].toInt()
-                if (db.updateTeamDescription(teamId, description)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "description_updated"))
-                    plugin.logger.debug("Team ID $teamId description has been updated to $description")
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "description_failed"))
-                }
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-            }
-            args[0].equals("format", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.format"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-
-                val sender = stack.sender
-                if (sender !is Player) {
-                    sender.sendRichMessage("Only players can use this command!")
-                    return
-                }
-
-                val teamData = db.getTeamByUUID(uuid.toString())
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-                    return
-                }
-
-                val teamOwnerUUID = teamData[2]
-                if (teamOwnerUUID != uuid.toString()) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
-                    return
-                }
-
-                InitialSelectionGUI(plugin).open(sender)
-            }
-            args[0].equals("delete", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.delete"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-                val teamData = db.getTeamByUUID(uuid.toString())
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-                    return
-                }
-                val teamId = teamData[0].toInt()
-                val teamName = teamData[1]
-                val teamLeaderUUID = teamData[2]
-
-                if (teamLeaderUUID != uuid.toString()) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
-                    return
-                }
-
-                val teamMembers = db.getTeamMembers(teamId)
-                var success = true
-
-                for (memberUuid in teamMembers) {
-                    if (!db.removePlayerFromTeam(teamId, memberUuid)) {
-                        success = false
-                    }
-                }
-
-                if (success && db.removeTeam(teamId, false)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "deleted", mapOf("team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "delete_failed", mapOf("team_name" to teamName)))
-                }
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-            }
-            args[0].equals("kick", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.kick"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-
-                if (args.size < 2) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "kick_usage"))
-                    return
-                }
-
-                val playerName = args[1]
-                val playerUUID = plugin.uuidManager.getUUID(playerName)
-                val teamData = db.getTeamByUUID(playerUUID.toString())
-
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "player_not_in_team", mapOf("player" to playerName)))
-                    return
-                }
-
-                val teamId = teamData[0].toInt()
-                val teamName = teamData[1]
-                val teamLeaderUUID = teamData[2]
-
-                if (teamLeaderUUID != uuid.toString()) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
-                    return
-                }
-
-                if (db.removePlayerFromTeam(teamId, playerUUID.toString())) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to teamName)))
-                    plugin.server.getPlayer(playerUUID)?.sendMessage(mH.teamMessage("team", "you_kicked", mapOf("team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "remove_failed", mapOf("player" to playerName, "team_name" to teamName)))
-                }
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-            }
-            args[0].equals("invite", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.team.premium") || stack.sender.hasPermission("teamx.cmd.team.invite"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-
-                if (args.size < 2) {
-                    stack.sender.sendMessage(mH.teamMessage("invitation", "usage"))
-                    return
-                }
-
-                val invitedPlayerName = args[1]
-                val invitedPlayer = plugin.server.getPlayer(invitedPlayerName)
-                if (invitedPlayer == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "player_not_found", mapOf("player" to invitedPlayerName)))
-                    return
-                }
-
-                val invitedPlayerUUID = invitedPlayer.uniqueId
-                val existingTeam = db.getTeamByUUID(invitedPlayerUUID.toString())
-                if (existingTeam != null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "player_already_in_team", mapOf("player" to invitedPlayerName)))
-                    return
-                }
-
-                val teamData = db.getTeamByUUID(uuid.toString())
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-                    return
-                }
-
-                val teamId = teamData[0]
-                val leader = stack.sender as Player
-                plugin.invitationManager.sendInvitation(teamId, leader, invitedPlayer)
-                stack.sender.sendMessage(mH.teamMessage("invitation", "sent", mapOf("player" to invitedPlayerName)))
-            }
-
-            args[0].equals("accept", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.basic") || stack.sender.hasPermission("teamx.cmd.team.accept"))) {
-                    stack.sender.sendMessage(plugin.messageHandler.teamMessage("error", "no_permission"))
-                    return
-                }
-
-                val sender = stack.sender
-                if (sender !is Player) {
-                    sender.sendMessage(mH.teamMessage("error", "console"))
-                    return
-                }
-
-                val existingTeam = db.getTeamByUUID(uuid.toString())
-                if (existingTeam != null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "already_in_team"))
-                    return
-                }
-
-                plugin.invitationManager.acceptInvitation(sender)
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-            }
-            args[0].equals("deny", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.basic") || stack.sender.hasPermission("teamx.cmd.team.deny"))) {
-                    stack.sender.sendMessage(plugin.messageHandler.teamMessage("error", "no_permission"))
-                    return
-                }
-
-                val sender = stack.sender
-                if (sender !is Player) {
-                    sender.sendMessage(mH.teamMessage("error", "console"))
-                    return
-                }
-
-                val existingTeam = db.getTeamByUUID(uuid.toString())
-                if (existingTeam != null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "already_in_team"))
-                    return
-                }
-
-                plugin.invitationManager.declineInvitation(sender)
-            }
-            args[0].equals("leave", ignoreCase = true) -> {
-                if (!(stack.sender.hasPermission("teamx.cmd.basic") || stack.sender.hasPermission("teamx.cmd.team.leave"))) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
-                    return
-                }
-
-                val sender = stack.sender
-                if (sender !is Player) {
-                    sender.sendMessage(mH.teamMessage("error", "console"))
-                    return
-                }
-
-                val teamData = db.getTeamByUUID(uuid.toString())
-                if (teamData == null) {
-                    stack.sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-                    return
-                }
-
-                val teamId = teamData[0].toInt()
-                val teamName = teamData[1]
-                if (db.removePlayerFromTeam(teamId, uuid.toString())) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "player_leaved", mapOf("player" to sender.name, "team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "leave_failed", mapOf("player" to sender.name, "team_name" to teamName)))
-                }
-                plugin.teamCacheManager.loadPlayerTeamData(uuid)
-            }
-
-        }
+    private fun usage(context: CommandContext<CommandSourceStack>, category: String, key: String): Int {
+        context.source.sender.sendMessage(mH.teamMessage(category, key))
+        return 0
     }
 
-    private fun executeAdmin(stack: CommandSourceStack, args: Array<String>) {
-        if (!stack.sender.hasPermission("teamx.cmd.team.admin")) {
-            stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
+    private fun adminUsage(context: CommandContext<CommandSourceStack>) = usage(context, "team", "admin_usage")
+
+    private fun runAsPlayer(context: CommandContext<CommandSourceStack>, action: (Player) -> Unit): Int {
+        val sender = context.source.sender
+        if (sender !is Player) return usage(context, "error", "console")
+        action(sender)
+        return 1
+    }
+
+    private fun withTeam(
+        context: CommandContext<CommandSourceStack>,
+        action: (CommandSender, Int, String) -> Unit
+    ): Int {
+        val sender = context.source.sender
+        val teamName = text(context, "team")
+        val team = db.getTeamByName(teamName)
+        if (team == null) {
+            sender.sendMessage(mH.teamMessage("error", "not_found", mapOf("team_name" to teamName)))
+            return 0
+        }
+        action(sender, team[0].toInt(), teamName)
+        return 1
+    }
+
+    private fun showPlots(sender: Player, page: Int) {
+        val uuid = sender.uniqueId
+        val plots = PlotsXHook.visitablePlots(uuid)
+        if (plots == null) {
+            sender.sendMessage(mH.teamMessage("plots", "unavailable"))
             return
         }
-        if (args.size < 3) {
-            stack.sender.sendMessage(mH.teamMessage("team", "admin_usage"))
+        if (plots.isEmpty()) {
+            sender.sendMessage(mH.teamMessage("plots", "empty"))
             return
         }
-        val action = args[1]
-        val teamName = args[2]
-        val teamData = db.getTeamByName(teamName)
+        val pageSize = 10
+        val pages = (plots.size - 1) / pageSize + 1
+        val currentPage = page.coerceIn(1, pages)
+        sender.sendMessage(mH.teamMessage("plots", "page", mapOf("page" to "$currentPage", "pages" to "$pages")))
+        plots.asSequence().drop((currentPage - 1) * pageSize).take(pageSize).forEach(sender::sendMessage)
+    }
+
+    private fun createTeam(sender: Player, name: String, description: String) {
+        val uuid = sender.uniqueId
+        val cleanName = validateTeamName(sender, name) ?: return
+        if (db.isTeamNameExists(cleanName)) {
+            sender.sendMessage(mH.teamMessage("team", "create_exists", mapOf("team_name" to cleanName)))
+            return
+        }
+
+        val existingTeam = db.getTeamByUUID(uuid.toString())
+        if (existingTeam != null) {
+            sender.sendMessage(mH.teamMessage("error", "already_in_team"))
+            return
+        }
+
+        if (!db.addTeam(cleanName, uuid.toString(), description)) {
+            sender.sendMessage(mH.teamMessage("team", "create_failed"))
+            return
+        }
+        sender.sendMessage(mH.teamMessage("team", "created", mapOf("team_name" to cleanName)))
+        plugin.logger.debug("Player ${sender.name} created a team:")
+        plugin.logger.debug("Description: $description")
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
+
+    private fun renameTeam(sender: Player, name: String) {
+        val uuid = sender.uniqueId
+        val newName = validateTeamName(sender, name) ?: return
+        val teamData = db.getTeamByUUID(uuid.toString())
         if (teamData == null) {
-            stack.sender.sendMessage(mH.teamMessage("error", "not_found", mapOf("team_name" to teamName)))
+            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
             return
         }
         val teamId = teamData[0].toInt()
+        if (db.isTeamNameExists(newName)) {
+            sender.sendMessage(mH.teamMessage("team", "rename_exists"))
+            return
+        }
+        if (db.updateTeamName(teamId, newName)) {
+            sender.sendMessage(mH.teamMessage("team", "renamed", mapOf("team_name" to newName)))
+            plugin.logger.debug("Team ID $teamId has been renamed to $newName")
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "rename_failed"))
+        }
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
 
-        when (action.lowercase()) {
-            "adduser" -> {
-                if (args.size < 4) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "admin_usage"))
-                    return
-                }
-                val playerName = args[3]
-                val playerUUID = plugin.uuidManager.getUUID(playerName)
-                if (db.addPlayerToTeam(teamId, playerUUID.toString())) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "player_added", mapOf("player" to playerName, "team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "add_failed", mapOf("player" to playerName, "team_name" to teamName)))
-                }
-                plugin.teamCacheManager.refreshCacheForOnlinePlayers()
-            }
-            "removeuser" -> {
-                if (args.size < 4) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "admin_usage"))
-                    return
-                }
-                val playerName = args[3]
-                val playerUUID = plugin.uuidManager.getUUID(playerName)
-                if (db.removePlayerFromTeam(teamId, playerUUID.toString())) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "remove_failed", mapOf("player" to playerName, "team_name" to teamName)))
-                }
-                plugin.teamCacheManager.refreshCacheForOnlinePlayers()
-            }
-            "setleader" -> {
-                if (args.size < 4) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "admin_usage"))
-                    return
-                }
-                val playerName = args[3]
-                val playerUUID = plugin.uuidManager.getUUID(playerName)
-                if (db.setTeamLeader(teamId, playerUUID.toString())) {
+    private fun updateDescription(sender: Player, description: String) {
+        val uuid = sender.uniqueId
+        val teamData = db.getTeamByUUID(uuid.toString())
+        if (teamData == null) {
+            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
+            return
+        }
+        val teamId = teamData[0].toInt()
+        if (db.updateTeamDescription(teamId, description)) {
+            sender.sendMessage(mH.teamMessage("team", "description_updated"))
+            plugin.logger.debug("Team ID $teamId description has been updated to $description")
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "description_failed"))
+        }
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
 
-                    stack.sender.sendMessage(mH.teamMessage("team", "leader_set", mapOf("player" to playerName, "team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "set_leader_failed", mapOf("player" to playerName, "team_name" to teamName)))
-                }
-                plugin.teamCacheManager.refreshCacheForOnlinePlayers()
-            }
-            "rename" -> {
-                if (args.size < 4) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "admin_usage"))
-                    return
-                }
-                val newName = validateTeamName(stack.sender, args[3]) ?: return
-                if (db.isTeamNameExists(newName)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "rename_exists"))
-                    return
-                }
-                if (db.updateTeamName(teamId, newName)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "renamed", mapOf("team_name" to newName)))
-                    plugin.logger.debug("Team ID $teamId has been renamed to $newName")
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "rename_failed"))
-                }
-                plugin.teamCacheManager.refreshCacheForOnlinePlayers()
-            }
-            "delete" -> {
-                val teamMembers = db.getTeamMembers(teamId)
-                var success = true
+    private fun openFormatMenu(sender: Player) {
+        val uuid = sender.uniqueId
+        val teamData = db.getTeamByUUID(uuid.toString())
+        if (teamData == null) {
+            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
+            return
+        }
 
-                for (memberUuid in teamMembers) {
-                    if (!db.removePlayerFromTeam(teamId, memberUuid)) {
-                        success = false
-                    }
-                }
+        val teamOwnerUUID = teamData[2]
+        if (teamOwnerUUID != uuid.toString()) {
+            sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
+            return
+        }
 
-                if (success && db.removeTeam(teamId, false)) {
-                    stack.sender.sendMessage(mH.teamMessage("team", "deleted", mapOf("team_name" to teamName)))
-                } else {
-                    stack.sender.sendMessage(mH.teamMessage("team", "delete_failed", mapOf("team_name" to teamName)))
-                }
-                plugin.teamCacheManager.refreshCacheForOnlinePlayers()
-            }
-            else -> {
-                stack.sender.sendMessage(mH.teamMessage("team", "admin_usage"))
+        InitialSelectionGUI(plugin).open(sender)
+    }
+
+    private fun deleteTeam(sender: Player) {
+        val uuid = sender.uniqueId
+        val teamData = db.getTeamByUUID(uuid.toString())
+        if (teamData == null) {
+            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
+            return
+        }
+        val teamId = teamData[0].toInt()
+        val teamName = teamData[1]
+        val teamLeaderUUID = teamData[2]
+
+        if (teamLeaderUUID != uuid.toString()) {
+            sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
+            return
+        }
+
+        val teamMembers = db.getTeamMembers(teamId)
+        var success = true
+
+        for (memberUuid in teamMembers) {
+            if (!db.removePlayerFromTeam(teamId, memberUuid)) {
+                success = false
             }
         }
+
+        if (success && db.removeTeam(teamId, false)) {
+            sender.sendMessage(mH.teamMessage("team", "deleted", mapOf("team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "delete_failed", mapOf("team_name" to teamName)))
+        }
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
+
+    private fun kickPlayer(sender: Player, playerName: String) {
+        val uuid = sender.uniqueId
+        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        val teamData = db.getTeamByUUID(playerUUID.toString())
+
+        if (teamData == null) {
+            sender.sendMessage(mH.teamMessage("error", "player_not_in_team", mapOf("player" to playerName)))
+            return
+        }
+
+        val teamId = teamData[0].toInt()
+        val teamName = teamData[1]
+        val teamLeaderUUID = teamData[2]
+
+        if (teamLeaderUUID != uuid.toString()) {
+            sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
+            return
+        }
+
+        if (db.removePlayerFromTeam(teamId, playerUUID.toString())) {
+            sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to teamName)))
+            plugin.server.getPlayer(playerUUID)?.sendMessage(mH.teamMessage("team", "you_kicked", mapOf("team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "remove_failed", mapOf("player" to playerName, "team_name" to teamName)))
+        }
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
+
+    private fun invitePlayer(sender: Player, invitedPlayerName: String) {
+        val uuid = sender.uniqueId
+        val invitedPlayer = plugin.server.getPlayer(invitedPlayerName)
+        if (invitedPlayer == null) {
+            sender.sendMessage(mH.teamMessage("error", "player_not_found", mapOf("player" to invitedPlayerName)))
+            return
+        }
+
+        val invitedPlayerUUID = invitedPlayer.uniqueId
+        val existingTeam = db.getTeamByUUID(invitedPlayerUUID.toString())
+        if (existingTeam != null) {
+            sender.sendMessage(mH.teamMessage("error", "player_already_in_team", mapOf("player" to invitedPlayerName)))
+            return
+        }
+
+        val teamData = db.getTeamByUUID(uuid.toString())
+        if (teamData == null) {
+            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
+            return
+        }
+
+        val teamId = teamData[0]
+        plugin.invitationManager.sendInvitation(teamId, sender, invitedPlayer)
+        sender.sendMessage(mH.teamMessage("invitation", "sent", mapOf("player" to invitedPlayerName)))
+    }
+
+    private fun acceptInvitation(sender: Player) {
+        val uuid = sender.uniqueId
+        val existingTeam = db.getTeamByUUID(uuid.toString())
+        if (existingTeam != null) {
+            sender.sendMessage(mH.teamMessage("error", "already_in_team"))
+            return
+        }
+
+        plugin.invitationManager.acceptInvitation(sender)
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
+
+    private fun declineInvitation(sender: Player) {
+        val uuid = sender.uniqueId
+        val existingTeam = db.getTeamByUUID(uuid.toString())
+        if (existingTeam != null) {
+            sender.sendMessage(mH.teamMessage("error", "already_in_team"))
+            return
+        }
+
+        plugin.invitationManager.declineInvitation(sender)
+    }
+
+    private fun leaveTeam(sender: Player) {
+        val uuid = sender.uniqueId
+        val teamData = db.getTeamByUUID(uuid.toString())
+        if (teamData == null) {
+            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
+            return
+        }
+
+        val teamId = teamData[0].toInt()
+        val teamName = teamData[1]
+        if (db.removePlayerFromTeam(teamId, uuid.toString())) {
+            sender.sendMessage(mH.teamMessage("team", "player_leaved", mapOf("player" to sender.name, "team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "leave_failed", mapOf("player" to sender.name, "team_name" to teamName)))
+        }
+        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+    }
+
+    private fun adminAddPlayer(sender: CommandSender, teamId: Int, teamName: String, playerName: String) {
+        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        if (db.addPlayerToTeam(teamId, playerUUID.toString())) {
+            sender.sendMessage(mH.teamMessage("team", "player_added", mapOf("player" to playerName, "team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "add_failed", mapOf("player" to playerName, "team_name" to teamName)))
+        }
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+    }
+
+    private fun adminRemovePlayer(sender: CommandSender, teamId: Int, teamName: String, playerName: String) {
+        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        if (db.removePlayerFromTeam(teamId, playerUUID.toString())) {
+            sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "remove_failed", mapOf("player" to playerName, "team_name" to teamName)))
+        }
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+    }
+
+    private fun adminSetLeader(sender: CommandSender, teamId: Int, teamName: String, playerName: String) {
+        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        if (db.setTeamLeader(teamId, playerUUID.toString())) {
+            sender.sendMessage(mH.teamMessage("team", "leader_set", mapOf("player" to playerName, "team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "set_leader_failed", mapOf("player" to playerName, "team_name" to teamName)))
+        }
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+    }
+
+    private fun adminRenameTeam(sender: CommandSender, teamId: Int, name: String) {
+        val newName = validateTeamName(sender, name) ?: return
+        if (db.isTeamNameExists(newName)) {
+            sender.sendMessage(mH.teamMessage("team", "rename_exists"))
+            return
+        }
+        if (db.updateTeamName(teamId, newName)) {
+            sender.sendMessage(mH.teamMessage("team", "renamed", mapOf("team_name" to newName)))
+            plugin.logger.debug("Team ID $teamId has been renamed to $newName")
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "rename_failed"))
+        }
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+    }
+
+    private fun adminDeleteTeam(sender: CommandSender, teamId: Int, teamName: String) {
+        val teamMembers = db.getTeamMembers(teamId)
+        var success = true
+
+        for (memberUuid in teamMembers) {
+            if (!db.removePlayerFromTeam(teamId, memberUuid)) {
+                success = false
+            }
+        }
+
+        if (success && db.removeTeam(teamId, false)) {
+            sender.sendMessage(mH.teamMessage("team", "deleted", mapOf("team_name" to teamName)))
+        } else {
+            sender.sendMessage(mH.teamMessage("team", "delete_failed", mapOf("team_name" to teamName)))
+        }
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
     }
 
     private fun validateTeamName(sender: CommandSender, input: String): String? {
@@ -479,14 +469,13 @@ class TeamCommand(private val plugin: TeamX) : BasicCommand {
         }
     }
 
-    private fun sendHelp(stack: CommandSourceStack, page: Int) {
-        val sender = stack.sender
+    private fun sendHelp(sender: CommandSender, page: Int) {
         val isPremium = sender.hasPermission("teamx.cmd.team.premium")
         val isAdmin = sender.hasPermission("teamx.cmd.team.admin")
 
         val commands = mutableListOf(
             "  <gold>/team plots [page] <gray>- <white>Lists plots you can access through PlotsX.",
-            "  <gold>/team create <name> <description> ",
+            "  <gold>/team create <name> [description] ",
             "         <gray>- <white>Creates a team with the given name and description.",
             "  <gold>/team rename <new_name> <gray>- <white>Changes the team name.",
             "  <gold>/team description <new_description>",
@@ -556,151 +545,5 @@ class TeamCommand(private val plugin: TeamX) : BasicCommand {
         ))
         sender.sendMessage(mH.miniMessageFormat(" <gray>|"))
         sender.sendMessage(mH.miniMessageFormat(" <gray>+-------------------------------------------------"))
-    }
-
-    override fun suggest(@NotNull stack: CommandSourceStack, @NotNull args: Array<String>): List<String> {
-        if (!stack.sender.hasPermission("teamx.cmd.team")) {
-            return emptyList()
-        }
-
-        if (args.isEmpty()) {
-            val suggestions = mutableListOf<String>()
-
-            // Komendy premium
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.create")) {
-                suggestions.add("create")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.rename")) {
-                suggestions.add("rename")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.description")) {
-                suggestions.add("description")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.format")) {
-                suggestions.add("format")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.delete")) {
-                suggestions.add("delete")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.kick")) {
-                suggestions.add("kick")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                stack.sender.hasPermission("teamx.cmd.team.invite")) {
-                suggestions.add("invite")
-            }
-
-            if (stack.sender.hasPermission("teamx.cmd.basic") ||
-                stack.sender.hasPermission("teamx.cmd.team.accept")) {
-                suggestions.add("accept")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.basic") ||
-                stack.sender.hasPermission("teamx.cmd.team.deny")) {
-                suggestions.add("deny")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.basic") ||
-                stack.sender.hasPermission("teamx.cmd.team.leave")) {
-                suggestions.add("leave")
-            }
-
-            if (stack.sender.hasPermission("teamx.cmd.team.admin")) {
-                suggestions.add("admin")
-            }
-
-            if (stack.sender is Player) suggestions.add("plots")
-            suggestions.add("help")
-
-            return suggestions
-        }
-        if (args.size == 1) {
-            val suggestions = mutableListOf<String>()
-            val arg = args[0].lowercase()
-
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.create")) && "create".startsWith(arg)) {
-                suggestions.add("create")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.rename")) && "rename".startsWith(arg)) {
-                suggestions.add("rename")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.description")) && "description".startsWith(arg)) {
-                suggestions.add("description")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.format")) && "format".startsWith(arg)) {
-                suggestions.add("format")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.delete")) && "delete".startsWith(arg)) {
-                suggestions.add("delete")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.kick")) && "kick".startsWith(arg)) {
-                suggestions.add("kick")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.team.premium") ||
-                        stack.sender.hasPermission("teamx.cmd.team.invite")) && "invite".startsWith(arg)) {
-                suggestions.add("invite")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.basic") ||
-                        stack.sender.hasPermission("teamx.cmd.team.accept")) && "accept".startsWith(arg)) {
-                suggestions.add("accept")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.basic") ||
-                        stack.sender.hasPermission("teamx.cmd.team.deny")) && "deny".startsWith(arg)) {
-                suggestions.add("deny")
-            }
-            if ((stack.sender.hasPermission("teamx.cmd.basic") ||
-                        stack.sender.hasPermission("teamx.cmd.team.leave")) && "leave".startsWith(arg)) {
-                suggestions.add("leave")
-            }
-            if (stack.sender.hasPermission("teamx.cmd.team.admin") && "admin".startsWith(arg)) {
-                suggestions.add("admin")
-            }
-            if ("help".startsWith(arg)) {
-                if (stack.sender is Player && "plots".startsWith(arg)) suggestions.add("plots")
-            suggestions.add("help")
-            }
-
-            return suggestions
-        }
-
-        if (args.size == 2) {
-            when (args[0].lowercase()) {
-                "kick", "invite" -> {
-                    return plugin.server.onlinePlayers.map { it.name }
-                        .filter { it.startsWith(args[1], ignoreCase = true) }
-                }
-            }
-        }
-
-        if (args[0].equals("admin", ignoreCase = true)) {
-            if (args.size == 2) {
-                val adminSubCommands = listOf("adduser", "removeuser", "addmanager", "removemanager", "setleader", "rename", "delete")
-                return adminSubCommands.filter { it.startsWith(args[1].lowercase()) }
-            }
-            if (args.size == 3) {
-                return plugin.databaseHandler.getTeamList()
-                    .filter { it.startsWith(args[2], ignoreCase = true) }
-            }
-            if (args.size == 4) {
-                val subCommand = args[1].lowercase()
-                if (subCommand in listOf("adduser", "removeuser", "addmanager", "removemanager", "setleader")) {
-                    return plugin.server.onlinePlayers.map { it.name }
-                        .filter { it.startsWith(args[3], ignoreCase = true) }
-                }
-                return emptyList()
-            }
-        }
-
-        return emptyList()
     }
 }
