@@ -27,7 +27,6 @@ repositories {
     maven("https://oss.sonatype.org/content/groups/public/") {
         name = "sonatype"
     }
-    maven("https://repo.menthamc.org/repository/maven-public/")
     maven("https://repo.extendedclip.com/releases/") // PlaceholderAPI
     maven("https://repo.codemc.org/repository/maven-public/") // VaultUnlockedAPI
     maven("https://jitpack.io") // VaultAPI
@@ -55,7 +54,6 @@ dependencies {
     compileOnly("com.github.milkbowl:VaultAPI:1.7.1")
     compileOnly("net.milkbowl.vault:VaultUnlockedAPI:2.13")
     compileOnly("pl.syntaxdevteam:cleanerx:1.5.1-DEV")
-    compileOnly("pl.syntaxdevteam.punisher:PunisherX:1.4.1")
 }
 
 
@@ -84,6 +82,10 @@ tasks.shadowJar {
     archiveClassifier.set("")
     archiveVersion.set(project.version.toString())
     mergeServiceFiles()
+}
+
+tasks.jar {
+    archiveClassifier.set("plain")
 }
 
 plugindeployer {

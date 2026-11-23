@@ -1,31 +1,27 @@
 package pl.syntaxdevteam.teamx.common
 
 import org.bukkit.Bukkit
-// import pl.syntaxdevteam.core.platform.ServerEnvironment
 import pl.syntaxdevteam.teamx.TeamX
 
 class VersionChecker(private val plugin: TeamX) {
 
     companion object {
-       /* private val SUPPORTED_VERSIONS: Set<SemanticVersion> = setOf(
-            SemanticVersion(1, 20, 6),
-            SemanticVersion(1, 21, 0),
-            SemanticVersion(1, 21, 1),
-            SemanticVersion(1, 21, 2),
-            SemanticVersion(1, 21, 3),
-            SemanticVersion(1, 21, 4),
-            SemanticVersion(1, 21, 5),
-            SemanticVersion(1, 21, 6),
-            SemanticVersion(1, 21, 7),
-            SemanticVersion(1, 21, 8),
-            SemanticVersion(1, 21, 9),
-            SemanticVersion(1, 21, 10),
-            SemanticVersion(1, 21, 11),
-            SemanticVersion(26, 1, 0)
+        private val SUPPORTED_VERSIONS = setOf(
+            "1.20.6",
+            "1.21",
+            "1.21.1",
+            "1.21.2",
+            "1.21.3",
+            "1.21.4",
+            "1.21.5",
+            "1.21.6",
+            "1.21.7",
+            "1.21.8",
+            "1.21.9",
+            "1.21.10",
+            "1.21.11",
+            "26.1"
         )
-*/
-        /*fun isVersionSupported(version: String): Boolean =
-            SUPPORTED_VERSIONS.contains(SemanticVersion.parse(version))*/
     }
 
     private fun getRawVersion(): String =
@@ -35,25 +31,16 @@ class VersionChecker(private val plugin: TeamX) {
         getRawVersion().substringBefore("-")
 
     fun isSupported(): Boolean =
-        /*isVersionSupported(getServerVersion())*/
+        getServerVersion().removeSuffix(".0") in SUPPORTED_VERSIONS
 
     fun checkAndLog(): Boolean {
         val version = getServerVersion()
         return if (isSupported()) {
-            //val platformVersion = ServerEnvironment.describeWithVersion(version)
-            plugin.logger.success("The server is running on a supported version platformVersion.")
+            plugin.logger.success("The server is running on supported version $version.")
             true
         } else {
             plugin.logger.warning("Warning! Unsupported version $version – use with caution!")
             false
         }
     }
-
-    //fun getSemanticVersion(): SemanticVersion = SemanticVersion.parse(getServerVersion())
-/*
-    fun isAtLeast(minVersion: String): Boolean {
-        val current = getSemanticVersion()
-        val required = SemanticVersion.parse(minVersion)
-        return current >= required
-    }*/
 }

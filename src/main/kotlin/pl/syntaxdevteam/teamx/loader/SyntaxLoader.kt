@@ -7,7 +7,6 @@ import org.eclipse.aether.artifact.DefaultArtifact
 import org.eclipse.aether.graph.Dependency
 import org.eclipse.aether.repository.RemoteRepository
 import org.yaml.snakeyaml.Yaml
-import pl.syntaxdevteam.punisher.loader.SyntaxLoader
 import java.io.IOException
 import java.io.InputStream
 
