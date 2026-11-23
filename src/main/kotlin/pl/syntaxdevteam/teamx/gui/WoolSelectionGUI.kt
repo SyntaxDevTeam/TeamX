@@ -39,7 +39,7 @@ class WoolSelectionGUI(private val plugin: TeamX) : GUI {
     override fun open(player: Player) {
         val inventory = TeamMenu(this, 54).inventory
 
-        for ((index, entry) in woolColorMap.entries.withIndex()) {
+        for ([index, entry] in woolColorMap.entries.withIndex()) {
             inventory.setItem(
                 index,
                 createItem(entry.value, "${getMiniMessageColor(entry.key)}${formatColorName(entry.key)}")
@@ -56,7 +56,7 @@ class WoolSelectionGUI(private val plugin: TeamX) : GUI {
         val slot = event.rawSlot                // numer slotu w całym widoku
 
         // 1) klik poza górnym GUI (dolna część ekwipunku lub creative‑tab) → allow
-        if (slot < 0 || slot >= topSize) return
+        if (slot !in 0..<topSize) return
 
         // 2) anuluj tylko jeśli klik w rzeczywistą pozycję w GUI
         event.isCancelled = true

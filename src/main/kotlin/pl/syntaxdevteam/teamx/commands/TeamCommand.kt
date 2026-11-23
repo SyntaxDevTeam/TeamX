@@ -5,7 +5,9 @@ import com.mojang.brigadier.arguments.StringArgumentType
 import com.mojang.brigadier.builder.LiteralArgumentBuilder
 import com.mojang.brigadier.builder.RequiredArgumentBuilder
 import com.mojang.brigadier.context.CommandContext
+import com.mojang.brigadier.suggestion.Suggestions
 import com.mojang.brigadier.suggestion.SuggestionsBuilder
+import com.mojang.brigadier.tree.LiteralCommandNode
 import io.papermc.paper.command.brigadier.CommandSourceStack
 import io.papermc.paper.command.brigadier.Commands
 import org.bukkit.command.CommandSender
@@ -16,67 +18,99 @@ import pl.syntaxdevteam.teamx.gui.InitialSelectionGUI
 import pl.syntaxdevteam.teamx.hooks.CleanerXHook
 import pl.syntaxdevteam.teamx.hooks.PlotsXHook
 import pl.syntaxdevteam.teamx.messages.teamMessage
+import java.util.concurrent.CompletableFuture
 
-@Suppress("UnstableApiUsage")
 class TeamCommand(private val plugin: TeamX) {
     private val mH get() = plugin.messageHandler
     private val db get() = plugin.databaseHandler
     private val maxNameLength get() = plugin.config.getInt("team.max-name-length", 16)
 
-    fun build() = Commands.literal("team")
+    fun build(): LiteralCommandNode<CommandSourceStack> = Commands.literal("team")
         .requires { plugin.isEnabled && it.sender.hasPermission("teamx.cmd.team") }
-        .executes {
-            sendHelp(it.source.sender, 1)
-            1
-        }
-        .then(Commands.literal("help")
-            .requires { it.sender.hasPermission("teamx.cmd.team.help") }
-            .executes {
-                sendHelp(it.source.sender, 1)
-                1
-            }
-            .then(Commands.argument("page", IntegerArgumentType.integer())
-                .executes {
-                    sendHelp(it.source.sender, IntegerArgumentType.getInteger(it, "page"))
-                    1
-                }))
-        .then(Commands.literal("plots")
-            .executes { runAsPlayer(it) { player -> showPlots(player, 1) } }
-            .then(Commands.argument("page", IntegerArgumentType.integer())
-                .executes { context ->
-                    runAsPlayer(context) { showPlots(it, IntegerArgumentType.getInteger(context, "page")) }
-                }))
-        .then(premium("create")
-            .executes { usage(it, "team", "create_usage") }
-            .then(Commands.argument("name", StringArgumentType.string())
-                .executes { context -> runAsPlayer(context) { createTeam(it, text(context, "name"), "") } }
-                .then(Commands.argument("description", StringArgumentType.greedyString())
-                    .executes { context ->
-                        runAsPlayer(context) { createTeam(it, text(context, "name"), text(context, "description")) }
-                    })))
-        .then(premium("rename")
-            .executes { usage(it, "team", "rename_usage") }
-            .then(Commands.argument("name", StringArgumentType.string())
-                .executes { context -> runAsPlayer(context) { renameTeam(it, text(context, "name")) } }))
-        .then(premium("description")
-            .executes { usage(it, "team", "description_usage") }
-            .then(Commands.argument("description", StringArgumentType.greedyString())
-                .executes { context -> runAsPlayer(context) { updateDescription(it, text(context, "description")) } }))
+        .executes { showHelp(it, 1) }
+        .then(helpCommand())
+        .then(plotsCommand())
+        .then(createCommand())
+        .then(renameCommand())
+        .then(descriptionCommand())
         .then(premium("format").executes { runAsPlayer(it, ::openFormatMenu) })
         .then(premium("delete").executes { runAsPlayer(it, ::deleteTeam) })
-        .then(premium("kick")
-            .executes { usage(it, "team", "kick_usage") }
-            .then(playerArgument().executes { context -> runAsPlayer(context) { kickPlayer(it, text(context, "player")) } }))
-        .then(premium("invite")
-            .executes { usage(it, "invitation", "usage") }
-            .then(playerArgument().executes { context -> runAsPlayer(context) { invitePlayer(it, text(context, "player")) } }))
+        .then(kickCommand())
+        .then(inviteCommand())
         .then(basic("accept").executes { runAsPlayer(it, ::acceptInvitation) })
         .then(basic("deny").executes { runAsPlayer(it, ::declineInvitation) })
         .then(basic("leave").executes { runAsPlayer(it, ::leaveTeam) })
         .then(admin())
         .build()
 
-    private fun admin() = Commands.literal("admin")
+    private fun helpCommand(): LiteralArgumentBuilder<CommandSourceStack> = Commands.literal("help")
+        .requires { it.sender.hasPermission("teamx.cmd.team.help") }
+        .executes { showHelp(it, 1) }
+        .then(
+            Commands.argument("page", IntegerArgumentType.integer())
+                .executes { showHelp(it, IntegerArgumentType.getInteger(it, "page")) }
+        )
+
+    private fun plotsCommand(): LiteralArgumentBuilder<CommandSourceStack> = Commands.literal("plots")
+        .executes { runAsPlayer(it) { player -> showPlots(player, 1) } }
+        .then(
+            Commands.argument("page", IntegerArgumentType.integer()).executes { context ->
+                runAsPlayer(context) { player -> showPlots(player, IntegerArgumentType.getInteger(context, "page")) }
+            }
+        )
+
+    private fun createCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("create")
+        .executes { usage(it, "team", "create_usage") }
+        .then(
+            Commands.argument("name", StringArgumentType.string())
+                .executes { context -> runAsPlayer(context) { createTeam(it, text(context, "name"), "") } }
+                .then(
+                    Commands.argument("description", StringArgumentType.greedyString()).executes { context ->
+                        runAsPlayer(context) { player ->
+                            createTeam(player, text(context, "name"), text(context, "description"))
+                        }
+                    }
+                )
+        )
+
+    private fun renameCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("rename")
+        .executes { usage(it, "team", "rename_usage") }
+        .then(
+            Commands.argument("name", StringArgumentType.string()).executes { context ->
+                runAsPlayer(context) { renameTeam(it, text(context, "name")) }
+            }
+        )
+
+    private fun descriptionCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("description")
+        .executes { usage(it, "team", "description_usage") }
+        .then(
+            Commands.argument("description", StringArgumentType.greedyString()).executes { context ->
+                runAsPlayer(context) { updateDescription(it, text(context, "description")) }
+            }
+        )
+
+    private fun kickCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("kick")
+        .executes { usage(it, "team", "kick_usage") }
+        .then(
+            playerArgument().executes { context ->
+                runAsPlayer(context) { kickPlayer(it, text(context, "player")) }
+            }
+        )
+
+    private fun inviteCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("invite")
+        .executes { usage(it, "invitation", "usage") }
+        .then(
+            playerArgument().executes { context ->
+                runAsPlayer(context) { invitePlayer(it, text(context, "player")) }
+            }
+        )
+
+    private fun showHelp(context: CommandContext<CommandSourceStack>, page: Int): Int {
+        sendHelp(context.source.sender, page)
+        return 1
+    }
+
+    private fun admin(): LiteralArgumentBuilder<CommandSourceStack> = Commands.literal("admin")
         .requires { it.sender.hasPermission("teamx.cmd.team.admin") }
         .executes(::adminUsage)
         .then(adminPlayerCommand("adduser", ::adminAddPlayer))
@@ -96,7 +130,7 @@ class TeamCommand(private val plugin: TeamX) {
     private fun adminPlayerCommand(
         name: String,
         action: (CommandSender, Int, String, String) -> Unit
-    ) = Commands.literal(name)
+    ): LiteralArgumentBuilder<CommandSourceStack> = Commands.literal(name)
         .executes(::adminUsage)
         .then(teamArgument().executes(::adminUsage)
             .then(playerArgument().executes { context ->
@@ -122,7 +156,10 @@ class TeamCommand(private val plugin: TeamX) {
             suggestNames(builder, db.getTeamList())
         }
 
-    private fun suggestNames(builder: SuggestionsBuilder, names: Iterable<String>) =
+    private fun suggestNames(
+        builder: SuggestionsBuilder,
+        names: Iterable<String>
+    ): CompletableFuture<Suggestions> =
         builder.apply {
             val prefix = remaining.removePrefix("\"").removePrefix("'")
             names.filter { it.startsWith(prefix, ignoreCase = true) }

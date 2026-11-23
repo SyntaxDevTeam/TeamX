@@ -53,7 +53,7 @@ class InvitationManager(private val plugin: TeamX) {
      * - usuwa zaproszenie z mapy [invitations],
      * - pobiera UUID gracza (przez uuidManager) oraz nazwę drużyny (z bazy danych, przez databaseHandler),
      * - wysyła wiadomość do zapraszanego gracza potwierdzającą akceptację zaproszenia,
-     * - dodaje gracza do drużyny przy użyciu metody [addPlayerToTeam] (przez databaseHandler),
+     * - dodaje gracza do drużyny przy użyciu metody [ addPlayerToTeam] (przez databaseHandler),
      * - wysyła powiadomienie do lidera o tym, że gracz przyjął zaproszenie.
      *
      * Jeśli zaproszenie nie istnieje (np. wygasło lub zostało wcześniej obsłużone), zapraszany otrzyma odpowiedni komunikat.

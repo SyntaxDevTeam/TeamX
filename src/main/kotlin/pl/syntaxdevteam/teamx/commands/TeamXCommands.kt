@@ -1,7 +1,10 @@
 package pl.syntaxdevteam.teamx.commands
 
 import com.mojang.brigadier.arguments.IntegerArgumentType
+import com.mojang.brigadier.tree.LiteralCommandNode
+import io.papermc.paper.command.brigadier.CommandSourceStack
 import io.papermc.paper.command.brigadier.Commands
+import io.papermc.paper.plugin.configuration.PluginMeta
 import org.bukkit.command.CommandSender
 import pl.syntaxdevteam.teamx.TeamX
 import pl.syntaxdevteam.teamx.messages.teamMessage
@@ -9,7 +12,7 @@ import pl.syntaxdevteam.teamx.messages.teamMessage
 class TeamXCommands(private val plugin: TeamX) {
     private val mH get() = plugin.messageHandler
 
-    fun build() = Commands.literal("teamx")
+    fun build(): LiteralCommandNode<CommandSourceStack> = Commands.literal("teamx")
         .requires { plugin.isEnabled && it.sender.hasPermission("teamx.cmd.ltx") }
         .executes {
             it.source.sender.sendMessage(mH.miniMessageFormat("<green>Type </green><gold>/ltx help</gold> <green>to see available commands</green>"))
@@ -50,7 +53,7 @@ class TeamXCommands(private val plugin: TeamX) {
         .build()
 
     private fun sendVersion(sender: CommandSender) {
-        val pluginMeta = plugin.pluginMeta
+        val pluginMeta: PluginMeta = plugin.pluginMeta
         sender.sendMessage(
             mH.miniMessageFormat(
                 "\n <gray>+-------------------------------------------------\n" +

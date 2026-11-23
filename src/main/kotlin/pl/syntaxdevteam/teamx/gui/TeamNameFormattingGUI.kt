@@ -75,7 +75,7 @@ class TeamNameFormattingGUI(private val plugin: TeamX) : GUI {
         val topSize = event.view.topInventory.size
 
         // jeśli kliknięto poza górną częścią GUI, nie rób nic
-        if (slot < 0 || slot >= topSize) return
+        if (slot !in 0..<topSize) return
 
         val clickedItem = event.currentItem ?: return
         val uuid = player.uniqueId

@@ -5,7 +5,6 @@ import me.clip.placeholderapi.expansion.PlaceholderExpansion
 import org.bukkit.entity.Player
 import java.util.UUID
 
-@Suppress("UnstableApiUsage")
 class PlaceholderHandler(private val plugin: TeamX) : PlaceholderExpansion() {
 
     override fun getIdentifier(): String {
@@ -53,8 +52,8 @@ class PlaceholderHandler(private val plugin: TeamX) : PlaceholderExpansion() {
     }
 
     private fun getTeamFullName(uuid: UUID): String {
-        val cached = plugin.teamCacheManager.get(uuid) ?: return plugin.config.getString("Placeholders.chat_format.solo", "<gray>Solo</gray>") ?: "<gray>Solo</gray>"
-        return "${cached.format}${cached.name}"
+        (val name1 = name, val format) = plugin.teamCacheManager.get(uuid) ?: return plugin.config.getString("Placeholders.chat_format.solo", "<gray>Solo</gray>") ?: "<gray>Solo</gray>"
+        return "$format$name1"
     }
 
     private fun getTeamLeader(uuid: UUID): String {
