@@ -1,8 +1,8 @@
 package pl.syntaxdevteam.teamx.gui
 
+import pl.syntaxdevteam.teamx.messages.teamMessage
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver
-import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
@@ -49,7 +49,7 @@ class TeamNameFormattingGUI(private val plugin: TeamX) : GUI {
     private val backTitle = configs.getString("GUI.back.title", "Back")!!
 
     override fun open(player: Player) {
-        val inventory = Bukkit.createInventory(null, 54, getTitle())
+        val inventory = TeamMenu(this, 54).inventory
 
         val boldItem = createItem(boldItemMaterial, boldTitle)
         val italicItem = createItem(italicItemMaterial, italicTitle)
@@ -78,7 +78,7 @@ class TeamNameFormattingGUI(private val plugin: TeamX) : GUI {
         if (slot < 0 || slot >= topSize) return
 
         val clickedItem = event.currentItem ?: return
-        val uuid = plugin.uuidManager.getUUID(player.name)
+        val uuid = player.uniqueId
         var teamNameFormat = plugin.cacheHandler.findPlayerCache(uuid.toString()) ?: ""
 
         // blokujemy tylko klikanie w GUI
@@ -89,7 +89,7 @@ class TeamNameFormattingGUI(private val plugin: TeamX) : GUI {
 
         when (clickedItem.type) {
             backMaterial -> {
-                player.sendMessage(plugin.messageHandler.getMessage("GUI", "return"))
+                player.sendMessage(plugin.messageHandler.teamMessage("GUI", "return"))
                 InitialSelectionGUI(plugin).open(player)
             }
             boldItemMaterial -> {
@@ -123,7 +123,7 @@ class TeamNameFormattingGUI(private val plugin: TeamX) : GUI {
 
             }
         }
-        player.sendMessage(plugin.messageHandler.getMessage("GUI", "saved"))
+        player.sendMessage(plugin.messageHandler.teamMessage("GUI", "saved"))
         val teamData = plugin.databaseHandler.getTeamByUUID(uuid.toString())
         val teamId = teamData?.get(0)?.toInt()
         if (teamId != null) {
@@ -135,7 +135,7 @@ class TeamNameFormattingGUI(private val plugin: TeamX) : GUI {
     }
 
     override fun getTitle(): Component {
-        return Component.text(plugin.messageHandler.getCleanMessage("GUI", "title_formatGUI"))
+        return plugin.messageHandler.stringMessageToComponentNoPrefix("GUI", "title_formatGUI")
     }
 
     private fun createItem(material: Material, name: String): ItemStack {

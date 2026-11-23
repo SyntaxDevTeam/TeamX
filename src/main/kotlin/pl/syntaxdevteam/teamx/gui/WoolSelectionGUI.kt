@@ -1,8 +1,8 @@
 package pl.syntaxdevteam.teamx.gui
 
+import pl.syntaxdevteam.teamx.messages.teamMessage
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver
-import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
@@ -37,7 +37,7 @@ class WoolSelectionGUI(private val plugin: TeamX) : GUI {
     )
 
     override fun open(player: Player) {
-        val inventory = Bukkit.createInventory(null, 54, getTitle())
+        val inventory = TeamMenu(this, 54).inventory
 
         for ((index, entry) in woolColorMap.entries.withIndex()) {
             inventory.setItem(
@@ -66,7 +66,7 @@ class WoolSelectionGUI(private val plugin: TeamX) : GUI {
 
         when (clicked.type) {
             backMaterial -> {
-                player.sendMessage(plugin.messageHandler.getMessage("GUI", "return"))
+                player.sendMessage(plugin.messageHandler.teamMessage("GUI", "return"))
                 InitialSelectionGUI(plugin).open(player)
             }
             else -> {
@@ -76,10 +76,10 @@ class WoolSelectionGUI(private val plugin: TeamX) : GUI {
                 else
                     getColorCode(woolEntry.key)
 
-                player.sendMessage(plugin.messageHandler.getMessage("GUI", "color_selected"))
+                player.sendMessage(plugin.messageHandler.teamMessage("GUI", "color_selected"))
                 plugin.logger.debug("Selected color: $selectedColor")
                 plugin.cacheHandler.savePlayerCache(
-                    plugin.uuidManager.getUUID(player.name).toString(),
+                    player.uniqueId.toString(),
                     selectedColor
                 )
                 TeamNameFormattingGUI(plugin).open(player)
@@ -132,7 +132,7 @@ class WoolSelectionGUI(private val plugin: TeamX) : GUI {
     }
 
     override fun getTitle(): Component {
-        return plugin.messageHandler.getLogMessage("GUI", "title_colorGUI")
+        return plugin.messageHandler.stringMessageToComponentNoPrefix("GUI", "title_colorGUI")
     }
 
     private fun createItem(material: Material, name: String): ItemStack {

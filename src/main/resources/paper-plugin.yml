@@ -18,28 +18,32 @@ main: pl.syntaxdevteam.teamx.TeamX
 loader: pl.syntaxdevteam.teamx.loader.SyntaxLoader
 has-open-classloader: false
 
-softdepend: [Folia, CleanerX]
-
 dependencies:
   server:
-    PlaceholderAPI: # czy jak się to nazywa
+    PlaceholderAPI:
       load: BEFORE
       required: false
-    MiniPlaceholders:
-      load: BEFORE
-      required: false
+      join-classpath: true
     LuckPerms:
       load: BEFORE
       required: false
+      join-classpath: true
     Vault:
       load: BEFORE
       required: false
+      join-classpath: true
     VaultUnlocked:
       load: BEFORE
       required: false
+      join-classpath: true
+    PlotsX:
+      load: BEFORE
+      required: false
+      join-classpath: true
     CleanerX:
       load: BEFORE
       required: false
+      join-classpath: true
 
 features:
   debug: true

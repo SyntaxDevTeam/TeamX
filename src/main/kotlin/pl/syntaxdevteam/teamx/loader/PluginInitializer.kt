@@ -1,87 +1,81 @@
 package pl.syntaxdevteam.teamx.loader
 
+import org.bukkit.event.HandlerList
+import pl.syntaxdevteam.core.SyntaxCore
+import pl.syntaxdevteam.core.config.BaseConfigMigration
+import pl.syntaxdevteam.core.config.ConfigManager
+import pl.syntaxdevteam.core.config.ConfigMigrationContext
+import pl.syntaxdevteam.core.platform.ServerEnvironment
+import pl.syntaxdevteam.message.SyntaxMessages
 import pl.syntaxdevteam.teamx.TeamX
 import pl.syntaxdevteam.teamx.basic.InvitationManager
 import pl.syntaxdevteam.teamx.basic.PlaceholderHandler
-import pl.syntaxdevteam.teamx.cache.TeamCacheManager
-import pl.syntaxdevteam.teamx.commands.CommandsManager
-import pl.syntaxdevteam.teamx.common.*
-import pl.syntaxdevteam.teamx.databases.DatabaseHandler
 import pl.syntaxdevteam.teamx.cache.ColorCacheHandler
+import pl.syntaxdevteam.teamx.cache.TeamCacheManager
+import pl.syntaxdevteam.teamx.databases.DatabaseHandler
 import pl.syntaxdevteam.teamx.gui.GUIHandler
-import pl.syntaxdevteam.teamx.hooks.CleanerXHook
+import pl.syntaxdevteam.teamx.gui.TeamMenu
 import pl.syntaxdevteam.teamx.hooks.HookHandler
 
-@Suppress("UnstableApiUsage")
 class PluginInitializer(private val plugin: TeamX) {
+    private var database: DatabaseHandler? = null
+    private var unregisterPlaceholders: (() -> Unit)? = null
 
     fun onEnable() {
-        setUpLogger()
         setupConfig()
-        setupUUID()
-        setupDatabase()
-        setupHandlers()
-        registerEvents()
-        registerCommands()
-        checkForUpdates()
-    }
+        val storage = DatabaseHandler(plugin)
+        database = storage
+        storage.openConnection()
+        storage.createTables()
+        plugin.databaseHandler = storage
 
-    fun onDisable() {
-        plugin.logger.err(plugin.pluginMeta.name + " " + plugin.pluginMeta.version + " has been disabled ☹️")
-    }
-
-    private fun setUpLogger() {
-        plugin.pluginConfig = plugin.getConfig()
-        plugin.logger = Logger(plugin, plugin.pluginConfig.getBoolean("debug"))
-    }
-
-    private fun setupConfig() {
-        plugin.saveDefaultConfig()
-        plugin.configHandler = ConfigHandler(plugin)
-        plugin.configHandler.verifyAndUpdateConfig()
-    }
-
-    private fun setupUUID() {
-        plugin.uuidManager = UUIDManager(plugin)
-    }
-
-    private fun setupDatabase() {
-        plugin.databaseHandler = DatabaseHandler(plugin)
-        plugin.databaseHandler.openConnection()
-        plugin.databaseHandler.createTables()
-    }
-
-    private fun setupHandlers() {
-        plugin.messageHandler = MessageHandler(plugin).apply { initial() }
-        plugin.pluginsManager = PluginManager(plugin)
+        plugin.messageHandler = SyntaxMessages.initialize(plugin)
         plugin.hookHandler = HookHandler(plugin)
         plugin.cacheHandler = ColorCacheHandler(plugin)
         plugin.invitationManager = InvitationManager(plugin)
         plugin.teamCacheManager = TeamCacheManager(plugin)
-    }
 
-    private fun registerCommands() {
-        plugin.commandsManager = CommandsManager(plugin)
-        plugin.commandsManager.registerCommands()
-    }
-
-    private fun registerEvents() {
-        plugin.server.pluginManager.registerEvents(GUIHandler(plugin), plugin)
+        plugin.server.pluginManager.registerEvents(GUIHandler(), plugin)
         plugin.server.pluginManager.registerEvents(plugin.teamCacheManager, plugin)
-        if (plugin.hookHandler.checkPlaceholderAPI()) {
-            PlaceholderHandler(plugin).register()
-        }
-        val cleanerXApi = CleanerXHook.getApi()
-        if (cleanerXApi != null) {
-            plugin.logger.info("CleanerX API detected - integration enabled.")
-        } else {
-            plugin.logger.info("CleanerX API not detected - skipping integration.")
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+        if (plugin.server.pluginManager.isPluginEnabled("PlaceholderAPI")) {
+            val expansion = PlaceholderHandler(plugin)
+            if (expansion.register()) {
+                unregisterPlaceholders = { expansion.unregister() }
+            }
         }
     }
 
-    private fun checkForUpdates() {
-        plugin.statsCollector = StatsCollector(plugin)
-        plugin.updateChecker = UpdateChecker(plugin)
-        plugin.updateChecker.checkForUpdates()
+    fun onDisable() {
+        val server = plugin.server
+        runCatching { unregisterPlaceholders?.invoke() }
+            .onFailure { plugin.logger.warning("Failed to unregister PlaceholderAPI expansion: ${it.message}") }
+        unregisterPlaceholders = null
+        if (!ServerEnvironment.isFoliaBased()) {
+            server.onlinePlayers.forEach { player ->
+                if (player.openInventory.topInventory.holder is TeamMenu) player.closeInventory()
+            }
+        }
+        HandlerList.unregisterAll(plugin)
+        server.asyncScheduler.cancelTasks(plugin)
+        server.servicesManager.unregisterAll(plugin)
+        try {
+            database?.closeConnection()
+        } finally {
+            database = null
+            SyntaxMessages.reset()
+            SyntaxCore.close()
+        }
+    }
+
+    private fun setupConfig() {
+        ConfigManager(plugin, plugin.logger, initialVersion = 100, targetVersion = 101)
+            .registerMigration(object : BaseConfigMigration(100, 101) {
+                override fun migrate(context: ConfigMigrationContext) {
+                    context.moveValue("checkForUpdates", "update.check-for-updates", removeSource = true)
+                    context.moveValue("autoDownloadUpdates", "update.auto-download", removeSource = true)
+                }
+            }).load()
+        plugin.reloadConfig()
     }
 }

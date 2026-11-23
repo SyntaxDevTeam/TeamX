@@ -1,5 +1,18 @@
 # TeamX
 
+TeamX is a Paper and Folia plugin for teams and clans on SMP servers.
+
+## Build and storage
+
+Build with JDK 21 using `./gradlew build`. Install `build/libs/TeamX-1.0.0-SNAPSHOT.jar`. Paper downloads Kotlin, MessageHandler and the SyntaxDB runtime modules on first startup. TeamX supports SQLite, MySQL, MariaDB through the MySQL driver, and PostgreSQL. The existing SQLite filename and table layout are preserved. H2 configurations require transferring the data to a supported engine before upgrading.
+
+## Integrations
+
+- LuckPerms supplies player metadata and permission-based team power.
+- CleanerX checks names when creating or renaming a team.
+- `/team plots [page]` lists plots accessible to the player through PlotsX.
+- PlugManX builds with modern Paper plugin support can manage TeamX through its enable and disable lifecycle.
+
 ## Basic Access
 Basic access to the `/team` command - `teamx.cmd.team`
 

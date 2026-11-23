@@ -19,7 +19,12 @@ import pl.syntaxdevteam.teamx.TeamX
 class HookHandler(private val plugin: TeamX) {
 
 
-    var luckPerms: LuckPerms? = null
+    val luckPerms: LuckPerms?
+        get() = if (Bukkit.getPluginManager().isPluginEnabled("LuckPerms")) {
+            Bukkit.getServicesManager().load(LuckPerms::class.java)
+        } else {
+            null
+        }
     private var chat: Chat? = null
     private var permission: Permission? = null
 
@@ -29,28 +34,9 @@ class HookHandler(private val plugin: TeamX) {
      * If the services are not found, warning messages are logged.
      */
     init {
-        checkPlaceholderAPI()
-        checkLuckPerms()
         checkVault()
         if (chat == null || permission == null) {
             checkVaultUnlocked()
-        }
-    }
-
-    /**
-     * Checks if the LuckPerms service is available on the server.
-     * If the service is found, it is hooked into, and a success message is logged.
-     * If the service is not found, a warning message is logged.
-     */
-    fun checkLuckPerms() {
-        if (Bukkit.getPluginManager().isPluginEnabled("LuckPerms")) {
-            val provider = Bukkit.getServicesManager().getRegistration(LuckPerms::class.java)
-            if (provider != null) {
-                luckPerms = provider.provider
-                plugin.logger.debug("Hooked into LuckPerms!")
-            }
-        } else {
-            plugin.logger.warning("LuckPerms plugin not found on server!")
         }
     }
 
@@ -92,37 +78,6 @@ class HookHandler(private val plugin: TeamX) {
         } else {
             plugin.logger.warning("VaultUnlocked plugin not found on server!")
         }
-    }
-
-    /**
-     * Checks if the PlaceholderAPI service is available on the server.
-     * If the service is found, it is hooked into, and a success message is logged.
-     * If the service is not found, a warning message is logged.
-     */
-fun checkPlaceholderAPI(): Boolean {
-    if (Bukkit.getPluginManager().isPluginEnabled("PlaceholderAPI")) {
-        plugin.logger.debug("Hooked into PlaceholderAPI!")
-        return true
-    } else {
-        plugin.logger.warning("PlaceholderAPI plugin not found on server!")
-        return false
-    }
-}
-
-    /**
-     * Checks if the MiniPlaceholders service is available on the server.
-     * If the service is found, it is hooked into, and a success message is logged.
-     * If the service is not found, a warning message is logged.
-     */
-    fun checkMiniPlaceholderAPI(): Boolean {
-        if (Bukkit.getPluginManager().isPluginEnabled("MiniPlaceholders")) {
-            plugin.logger.debug("Hooked into MiniPlaceholders!")
-            return true
-        } else {
-            plugin.logger.warning("MiniPlaceholders plugin not found on server!")
-            return false
-        }
-
     }
 
     /**

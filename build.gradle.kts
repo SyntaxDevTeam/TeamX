@@ -1,5 +1,5 @@
 plugins {
-    kotlin("jvm") version "2.4.20"
+    alias(libs.plugins.kotlin.jvm)
     id("com.gradleup.shadow") version "9.6.1"
     `maven-publish`
     id("io.papermc.hangar-publish-plugin") version "0.1.3"
@@ -28,34 +28,28 @@ repositories {
         name = "sonatype"
     }
     maven("https://repo.extendedclip.com/releases/") // PlaceholderAPI
-    maven("https://repo.codemc.org/repository/maven-public/") // VaultUnlockedAPI
     maven("https://jitpack.io") // VaultAPI
-    maven("https://repo.essentialsx.net/releases/") // EssentialsX
+}
+
+val syntaxCoreBundle by configurations.creating {
+    isCanBeConsumed = false
+    isTransitive = false
 }
 
 dependencies {
+    syntaxCoreBundle(libs.syntaxcore)
+    compileOnly(kotlin("stdlib"))
+    compileOnly(libs.syntaxcore)
+    compileOnly(libs.syntaxdb.core)
+    compileOnly(libs.messagehandler.paper)
+    compileOnly(libs.plotsx.api)
     compileOnly("io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT")
     compileOnly("org.eclipse.aether:aether-api:1.1.0")
-    compileOnly("org.yaml:snakeyaml:2.4")
-    compileOnly("com.google.code.gson:gson:2.13.1")
-    compileOnly("net.kyori:adventure-text-serializer-legacy:4.23.0")
-    compileOnly("net.kyori:adventure-text-minimessage:4.23.0")
-    compileOnly("net.kyori:adventure-text-serializer-gson:4.23.0")
-    compileOnly("net.kyori:adventure-text-serializer-plain:4.23.0")
-    compileOnly("net.kyori:adventure-text-serializer-ansi:4.23.0")
-    compileOnly("org.mariadb.jdbc:mariadb-java-client:3.5.4")
-    compileOnly("org.xerial:sqlite-jdbc:3.50.2.0")
-    compileOnly("org.postgresql:postgresql:42.7.7")
-    compileOnly("com.h2database:h2:2.3.232")
-    compileOnly("com.zaxxer:HikariCP:6.3.0")
     compileOnly("net.luckperms:api:5.5")
     compileOnly("me.clip:placeholderapi:2.11.6")
-    compileOnly("io.github.miniplaceholders:miniplaceholders-kotlin-ext:2.3.0")
     compileOnly("com.github.milkbowl:VaultAPI:1.7.1")
-    compileOnly("net.milkbowl.vault:VaultUnlockedAPI:2.13")
     compileOnly("pl.syntaxdevteam:cleanerx:1.5.1-DEV")
 }
-
 
 tasks {
     build {
@@ -69,10 +63,16 @@ tasks {
 }
 
 tasks.processResources {
-    val props = mapOf("version" to version, "description" to description)
+    val props = mapOf(
+        "version" to project.version,
+        "description" to project.description,
+        "kotlinVersion" to libs.versions.kotlin.get(),
+        "syntaxDbVersion" to libs.versions.syntaxdb.get(),
+        "messageHandlerVersion" to libs.versions.messagehandler.get()
+    )
     inputs.properties(props)
     filteringCharset = "UTF-8"
-    filesMatching("paper-plugin.yml") {
+    filesMatching(listOf("paper-plugin.yml", "paper-libraries.yml")) {
         expand(props)
     }
 }
@@ -81,6 +81,14 @@ tasks.shadowJar {
     archiveBaseName.set("TeamX")
     archiveClassifier.set("")
     archiveVersion.set(project.version.toString())
+    from({ zipTree(syntaxCoreBundle.singleFile) }) {
+        exclude("net/kyori/**", "META-INF/versions/**/net/kyori/**")
+        exclude("kotlin/**", "META-INF/versions/**/kotlin/**", "META-INF/*.kotlin_module")
+        exclude("META-INF/MANIFEST.MF", "META-INF/maven/**", "**/module-info.class")
+    }
+    filesMatching(listOf("META-INF/services/**", "META-INF/*.kotlin_module")) {
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+    }
     mergeServiceFiles()
 }
 

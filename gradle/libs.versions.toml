@@ -1,0 +1,15 @@
+[versions]
+kotlin = "2.4.20"
+syntaxcore = "1.5.1-R0.1-SNAPSHOT"
+syntaxdb = "0.1.0-R0.1-SNAPSHOT"
+messagehandler = "1.3.0-R0.4-SNAPSHOT"
+plotsx = "1.1.0-R0.1-SNAPSHOT"
+
+[libraries]
+syntaxcore = { module = "pl.syntaxdevteam:syntaxcore", version.ref = "syntaxcore" }
+syntaxdb-core = { module = "pl.syntaxdevteam:syntaxdb-core", version.ref = "syntaxdb" }
+messagehandler-paper = { module = "pl.syntaxdevteam:messageHandler-paper", version.ref = "messagehandler" }
+plotsx-api = { module = "pl.syntaxdevteam:plotsx-api", version.ref = "plotsx" }
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }

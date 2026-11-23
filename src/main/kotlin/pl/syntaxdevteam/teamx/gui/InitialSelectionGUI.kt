@@ -1,8 +1,8 @@
 package pl.syntaxdevteam.teamx.gui
 
+import pl.syntaxdevteam.teamx.messages.teamMessage
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver
-import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.inventory.InventoryClickEvent
@@ -22,7 +22,7 @@ class InitialSelectionGUI(private val plugin: TeamX) : GUI {
     private val formatIndex = plugin.config.getInt("GUI.format.index", 15)
 
     override fun open(player: Player) {
-        val inventory = Bukkit.createInventory(null, 27, getTitle())
+        val inventory = TeamMenu(this, 27).inventory
 
         val colorItem = createItem(colorMaterial, colorTitleMaterialName)
         val formatItem = createItem(formatMaterial, formatTitleMaterialName)
@@ -47,11 +47,11 @@ class InitialSelectionGUI(private val plugin: TeamX) : GUI {
 
         when (slot) {
             colorIndex -> {
-                player.sendMessage(plugin.messageHandler.getMessage("GUI", "opening_color"))
+                player.sendMessage(plugin.messageHandler.teamMessage("GUI", "opening_color"))
                 WoolSelectionGUI(plugin).open(player)
             }
             formatIndex -> {
-                player.sendMessage(plugin.messageHandler.getMessage("GUI", "opening_format"))
+                player.sendMessage(plugin.messageHandler.teamMessage("GUI", "opening_format"))
                 TeamNameFormattingGUI(plugin).open(player)
             }
         }
@@ -59,7 +59,7 @@ class InitialSelectionGUI(private val plugin: TeamX) : GUI {
     }
 
     override fun getTitle(): Component {
-        return plugin.messageHandler.getLogMessage("GUI", "title_initialGUI")
+        return plugin.messageHandler.stringMessageToComponentNoPrefix("GUI", "title_initialGUI")
     }
 
     private fun createItem(material: Material, name: String): ItemStack {

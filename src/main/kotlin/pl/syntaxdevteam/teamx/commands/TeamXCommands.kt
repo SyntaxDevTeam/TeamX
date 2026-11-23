@@ -1,22 +1,22 @@
 package pl.syntaxdevteam.teamx.commands
 
+import pl.syntaxdevteam.teamx.messages.teamMessage
 import io.papermc.paper.command.brigadier.BasicCommand
 import io.papermc.paper.command.brigadier.CommandSourceStack
 import io.papermc.paper.plugin.lifecycle.event.LifecycleEventOwner
 import org.jetbrains.annotations.NotNull
 import pl.syntaxdevteam.teamx.TeamX
 
-@Suppress("UnstableApiUsage", "DEPRECATION")
 class TeamXCommands(private val plugin: TeamX) : BasicCommand {
-    private val mH = plugin.messageHandler
+    private val mH get() = plugin.messageHandler
 
     override fun execute(@NotNull stack: CommandSourceStack, @NotNull args: Array<String>) {
+        if (!plugin.isEnabled) return
         if (!stack.sender.hasPermission("teamx.cmd.ltx")) {
-            stack.sender.sendMessage(plugin.messageHandler.getMessage("error", "no_permission"))
+            stack.sender.sendMessage(plugin.messageHandler.teamMessage("error", "no_permission"))
             return
         }
         val pluginMeta = (plugin as LifecycleEventOwner).pluginMeta
-        val pdf = plugin.description
         if (args.isNotEmpty()) {
             when {
                 args[0].equals("help", ignoreCase = true) -> {
@@ -32,9 +32,9 @@ class TeamXCommands(private val plugin: TeamX) : BasicCommand {
                         mH.miniMessageFormat(
                             "\n <gray>+-------------------------------------------------\n" +
                                     " <gray>|\n" +
-                                    " <gray>|   <gold>→ <bold>" + pluginMeta.name + "</bold> ←\n" +
-                                    " <gray>|   <white>Author: <bold><gold>" + pdf.authors + "</gold></bold>\n" +
-                                    " <gray>|   <white>Website: <bold><gold><click:open_url:'" + pdf.website + "'>" + pdf.website + "</click></gold></bold>\n" +
+                                    " <gray>|   <gold>→ <bold>" + pluginMeta.name + "</bold> ←</gold>\n" +
+                                    " <gray>|   <white>Author: <bold><gold>" + pluginMeta.authors + "</gold></bold>\n" +
+                                    " <gray>|   <white>Website: <bold><gold><click:open_url:'" + pluginMeta.website + "'>" + pluginMeta.website + "</click></gold></bold>\n" +
                                     " <gray>|   <white>Version: <bold><gold>" + pluginMeta.version + "</gold></bold>\n" +
                                     " <gray>|" +
                                     "\n<gray>+-------------------------------------------------"
@@ -46,21 +46,21 @@ class TeamXCommands(private val plugin: TeamX) : BasicCommand {
                 args[0].equals("reload", ignoreCase = true) -> {
 
                     plugin.onReload()
-                    stack.sender.sendMessage(mH.getMessage("reload", "success"))
+                    stack.sender.sendMessage(mH.teamMessage("reload", "success"))
                     plugin.teamCacheManager.refreshCacheForOnlinePlayers()
                 }
                 args[0].equals("export", ignoreCase = true) -> {
                     if (stack.sender.hasPermission("consentchecker.cmd.export")) {
                         plugin.databaseHandler.exportDatabase()
                     } else {
-                        stack.sender.sendMessage(mH.getMessage("error", "no_permission"))
+                        stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
                     }
                 }
                 args[0].equals("import", ignoreCase = true) -> {
                     if (stack.sender.hasPermission("consentchecker.cmd.import")) {
                         plugin.databaseHandler.importDatabase()
                     } else {
-                        stack.sender.sendMessage(mH.getMessage("error", "no_permission"))
+                        stack.sender.sendMessage(mH.teamMessage("error", "no_permission"))
                     }
                 }
             }

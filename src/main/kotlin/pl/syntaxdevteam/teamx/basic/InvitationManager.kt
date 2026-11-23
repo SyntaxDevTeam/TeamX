@@ -1,5 +1,6 @@
 package pl.syntaxdevteam.teamx.basic
 
+import pl.syntaxdevteam.teamx.messages.teamMessage
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import pl.syntaxdevteam.teamx.TeamX
@@ -39,7 +40,7 @@ class InvitationManager(private val plugin: TeamX) {
         invitations[invited.uniqueId] = invitation
 
         // Informujemy zapraszanego gracza o otrzymaniu zaproszenia
-        invited.sendMessage(mH.getMessage("invitation", "received", mapOf("leader" to leader.name)))
+        invited.sendMessage(mH.teamMessage("invitation", "received", mapOf("leader" to leader.name)))
 
         // Ustawiamy automatyczne wygaszenie zaproszenia po 120 sekundach
         scheduleExpiration(invited.uniqueId)
@@ -61,18 +62,18 @@ class InvitationManager(private val plugin: TeamX) {
      */
     fun acceptInvitation(invited: Player) {
         val invitation = invitations.remove(invited.uniqueId)
-        val uuid = plugin.uuidManager.getUUID(invited.name)
+        val uuid = invited.uniqueId
         val name = plugin.databaseHandler.getTeamByUUID(invitation?.leaderUUID.toString())
         val teamName = name?.get(1)
         if (invitation != null) {
-            invited.sendMessage(mH.getMessage("invitation", "accepted", mapOf("team_name" to teamName!!)))
+            invited.sendMessage(mH.teamMessage("invitation", "accepted", mapOf("team_name" to teamName!!)))
             plugin.databaseHandler.addPlayerToTeam(invitation.teamId.toInt(), uuid.toString())
 
             Bukkit.getPlayer(invitation.leaderUUID)?.sendMessage(
-                mH.getMessage("invitation", "player_accepted", mapOf("player" to invited.name))
+                mH.teamMessage("invitation", "player_accepted", mapOf("player" to invited.name))
             )
         } else {
-            invited.sendMessage(mH.getMessage("invitation", "no_invitation"))
+            invited.sendMessage(mH.teamMessage("invitation", "no_invitation"))
         }
     }
 
@@ -91,13 +92,13 @@ class InvitationManager(private val plugin: TeamX) {
     fun declineInvitation(invited: Player) {
         val invitation = invitations.remove(invited.uniqueId)
         if (invitation != null) {
-            invited.sendMessage(mH.getMessage("invitation", "denied"))
+            invited.sendMessage(mH.teamMessage("invitation", "denied"))
             // Powiadom lidera, że gracz odrzucił zaproszenie
             Bukkit.getPlayer(invitation.leaderUUID)?.sendMessage(
-                plugin.messageHandler.getMessage("invitation", "player_denied", mapOf("player" to invited.name))
+                plugin.messageHandler.teamMessage("invitation", "player_denied", mapOf("player" to invited.name))
             )
         } else {
-            invited.sendMessage(plugin.messageHandler.getMessage("invitation", "no_invitation"))
+            invited.sendMessage(plugin.messageHandler.teamMessage("invitation", "no_invitation"))
         }
     }
 
@@ -115,7 +116,7 @@ class InvitationManager(private val plugin: TeamX) {
         Bukkit.getScheduler().runTaskLater(plugin, Runnable {
             val invitation = invitations.remove(invitedUUID)
             if (invitation != null) {
-                Bukkit.getPlayer(invitedUUID)?.sendMessage(mH.getMessage("invitation", "expired"))
+                Bukkit.getPlayer(invitedUUID)?.sendMessage(mH.teamMessage("invitation", "expired"))
             }
         }, 120 * 20L)
     }

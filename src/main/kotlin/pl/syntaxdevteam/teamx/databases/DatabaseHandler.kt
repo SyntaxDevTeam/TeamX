@@ -1,7 +1,7 @@
 package pl.syntaxdevteam.teamx.databases
 
-import com.zaxxer.hikari.HikariConfig
-import com.zaxxer.hikari.HikariDataSource
+import pl.syntaxdevteam.syntaxdb.Database
+import pl.syntaxdevteam.syntaxdb.config.DatabaseType
 import net.kyori.adventure.text.Component
 import pl.syntaxdevteam.teamx.TeamX
 import java.io.File
@@ -9,166 +9,32 @@ import java.io.IOException
 import java.sql.*
 
 class DatabaseHandler(private val plugin: TeamX) {
-    private var dataSource: HikariDataSource? = null
-    private var logger = plugin.logger
-    private val dbType = plugin.config.getString("database.type")?.lowercase() ?: "sqlite"
-
-    init {
-        setupDataSource()
+    private val logger = plugin.logger
+    private val dbType = when (val configured = (plugin.config.getString("database.type") ?: "sqlite").trim().lowercase()) {
+        "sqlite" -> DatabaseType.SQLITE
+        "mysql", "mariadb" -> DatabaseType.MYSQL
+        "postgresql" -> DatabaseType.POSTGRESQL
+        else -> error("Unsupported TeamX database type '$configured'. Use sqlite, mysql, mariadb or postgresql.")
     }
-
-    /**
-     * Configures the HikariCP data source for database connections.
-     *
-     * This method sets up the data source based on the database type defined in the plugin configuration.
-     * It supports the following database types:
-     * - MySQL/MariaDB
-     * - PostgreSQL
-     * - SQLite
-     * - H2
-     *
-     * For SQLite databases, specific pool settings are applied to minimize resource usage.
-     * For other database types, the pool is configured with more robust settings suitable for production.
-     *
-     * @throws IllegalArgumentException If the database type is unsupported.
-     * @throws Exception If an error occurs during data source initialization.
-     */
-
-    private fun setupDataSource() {
-        val hikariConfig = HikariConfig()
-        val dbName = plugin.config.getString("database.sql.dbname") ?: plugin.name
-        val user = plugin.config.getString("database.sql.username") ?: "ROOT"
-        val password = plugin.config.getString("database.sql.password") ?: "U5eV3ryStr0ngP4ssw0rd"
-        when (dbType) {
-            "mysql", "mariadb" -> {
-                hikariConfig.jdbcUrl =
-                    "jdbc:mysql://${plugin.config.getString("database.sql.host")}:${plugin.config.getString("database.sql.port")}/$dbName"
-                hikariConfig.username = user
-                hikariConfig.password = password
-                hikariConfig.driverClassName = "com.mysql.cj.jdbc.Driver"
-            }
-
-            "postgresql" -> {
-                hikariConfig.jdbcUrl =
-                    "jdbc:postgresql://${plugin.config.getString("database.sql.host")}:${plugin.config.getString("database.sql.port")}/$dbName"
-                hikariConfig.username = user
-                hikariConfig.password = password
-                hikariConfig.driverClassName = "org.postgresql.Driver"
-            }
-
-            "sqlite" -> {
-                hikariConfig.jdbcUrl = "jdbc:sqlite:${plugin.dataFolder}/$dbName.db"
-                hikariConfig.driverClassName = "org.sqlite.JDBC"
-            }
-
-            "h2" -> {
-                hikariConfig.jdbcUrl = "jdbc:h2:./${plugin.dataFolder}/$dbName"
-                hikariConfig.username = user
-                hikariConfig.password = password
-                hikariConfig.driverClassName = "org.h2.Driver"
-            }
-
-            else -> throw IllegalArgumentException("Unsupported database type: $dbType")
-        }
-        if (dbType == "sqlite") {
-            hikariConfig.maximumPoolSize = 2
-            hikariConfig.minimumIdle = 1
-            hikariConfig.connectionTimeout = 30000
-            hikariConfig.idleTimeout = 10000
-            hikariConfig.maxLifetime = 60000
-            hikariConfig.keepaliveTime = 30000
+    private val database = Database.create(dbType) {
+        val config = plugin.config
+        val dbName = config.getString("database.sql.dbname") ?: plugin.name
+        if (dbType == DatabaseType.SQLITE) {
+            file = File(plugin.dataFolder, "$dbName.db").path
+            property("journal_mode", "WAL")
         } else {
-            hikariConfig.maximumPoolSize = 10
-            hikariConfig.minimumIdle = 2
-            hikariConfig.connectionTimeout = 30000
-            hikariConfig.idleTimeout = 600000
-            hikariConfig.maxLifetime = 1800000
-            hikariConfig.keepaliveTime = 900000
-            hikariConfig.leakDetectionThreshold = 2000
+            host = config.getString("database.sql.host", "localhost") ?: "localhost"
+            port = config.getString("database.sql.port")?.toIntOrNull()?.takeIf { it > 0 }
+            database = dbName
+            username = config.getString("database.sql.username")
+            password = config.getString("database.sql.password")
         }
-
-        logger.debug("Setting up data source for database type: $dbType")
-        try {
-            dataSource = HikariDataSource(hikariConfig)
-            logger.debug("HikariCP data source initialized successfully for $dbType.")
-        } catch (e: Exception) {
-            logger.err("Failed to initialize HikariCP data source: ${e.message}")
-            throw e
-        }
+        pool { poolName = "${plugin.name}-database" }
     }
 
-    /**
-     * Ensures that the database connection is open.
-     *
-     * If the data source is not initialized, this method will invoke `setupDataSource`
-     * to configure and start the connection pool.
-     */
-    fun openConnection() {
-        if (dataSource == null) {
-            setupDataSource()
-        }
-    }
+    fun openConnection() = database.start()
 
-    /**
-     * Closes the HikariCP connection pool.
-     *
-     * This method gracefully shuts down the data source, releasing all resources associated with
-     * the connection pool. It also logs the pool's statistics, such as total, active, and idle connections.
-     *
-     * Any errors encountered during shutdown are logged but do not interrupt the process.
-     */
-    fun closeConnection() {
-        try {
-            dataSource?.close()
-            logger.info("HikariCP pool shut down. Total=${dataSource?.hikariPoolMXBean?.totalConnections}, Active=${dataSource?.hikariPoolMXBean?.activeConnections}, Idle=${dataSource?.hikariPoolMXBean?.idleConnections}")
-        } catch (e: SQLException) {
-            logger.err("Error while closing HikariCP pool: ${e.message}")
-        }
-    }
-
-    /**
-     * Obtains a connection from the HikariCP data source.
-     *
-     * This method retrieves a connection from the pool and, if the database type is SQLite,
-     * enables Write-Ahead Logging (WAL) mode to improve performance.
-     *
-     * Connections must be properly closed after use to avoid resource leaks.
-     *
-     * @return A valid `Connection` object, or `null` if the connection could not be established.
-     */
-    private fun getConnection(): Connection? {
-        return try {
-            val connection = dataSource?.connection
-            if (connection != null && dbType == "sqlite") {
-                enableSQLiteWAL(connection)
-            }
-            logger.debug("Connection obtained: Active=${dataSource?.hikariPoolMXBean?.activeConnections}, Idle=${dataSource?.hikariPoolMXBean?.idleConnections}")
-            connection
-        } catch (e: SQLException) {
-            logger.err("Failed to get connection. ${e.message}")
-            null
-        }
-    }
-
-    /**
-     * Enables Write-Ahead Logging (WAL) mode for SQLite.
-     *
-     * WAL mode improves SQLite's performance by allowing concurrent reads and writes.
-     * This method executes the `PRAGMA journal_mode=WAL;` statement on the provided connection.
-     *
-     * @param connection The active SQLite connection.
-     */
-    private fun enableSQLiteWAL(connection: Connection) {
-        logger.debug("SQLite connection detected! I'm enabling WAL mode")
-        try {
-            connection.createStatement().use { statement ->
-                statement.execute("PRAGMA journal_mode=WAL;")
-                logger.debug("SQLite WAL mode enabled.")
-            }
-        } catch (e: SQLException) {
-            logger.err("Failed to enable SQLite WAL mode. ${e.message}")
-        }
-    }
+    fun closeConnection() = database.close()
 
     /**
      * Metoda do tworzenia tabel w bazie danych.
@@ -194,115 +60,88 @@ class DatabaseHandler(private val plugin: TeamX) {
      *
      */
     fun createTables() {
-        getConnection()?.use { conn ->
+        database.withConnection { conn ->
             logger.debug("Database connection established from createTables")
             conn.createStatement().use { statement ->
-                try {
-                    val createTeamsTable = when (dbType) {
-                        "sqlite" -> """
-                        CREATE TABLE IF NOT EXISTS teams (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            name TEXT UNIQUE NOT NULL,
-                            leader_uuid CHAR(36) NOT NULL,
-                            format TEXT UNIQUE,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            description TEXT DEFAULT NULL
-                        );
-                    """.trimIndent()
+                val createTeamsTable = when (dbType) {
+                    DatabaseType.SQLITE -> """
+                    CREATE TABLE IF NOT EXISTS teams (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT UNIQUE NOT NULL,
+                        leader_uuid CHAR(36) NOT NULL,
+                        format TEXT UNIQUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        description TEXT DEFAULT NULL
+                    );
+                """.trimIndent()
 
-                        "postgresql" -> """
-                        CREATE TABLE IF NOT EXISTS teams (
-                            id SERIAL PRIMARY KEY,
-                            name VARCHAR(32) UNIQUE NOT NULL,
-                            leader_uuid CHAR(36) NOT NULL,
-                            format VARCHAR(128) UNIQUE,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            description TEXT DEFAULT NULL
-                        );
-                    """.trimIndent()
+                    DatabaseType.POSTGRESQL -> """
+                    CREATE TABLE IF NOT EXISTS teams (
+                        id SERIAL PRIMARY KEY,
+                        name VARCHAR(32) UNIQUE NOT NULL,
+                        leader_uuid CHAR(36) NOT NULL,
+                        format VARCHAR(128) UNIQUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        description TEXT DEFAULT NULL
+                    );
+                """.trimIndent()
 
-                        "h2" -> """
-                        CREATE TABLE IF NOT EXISTS teams (
-                            id INT AUTO_INCREMENT PRIMARY KEY,
-                            name VARCHAR(32) UNIQUE NOT NULL,
-                            leader_uuid CHAR(36) NOT NULL,
-                            format VARCHAR(128) UNIQUE,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            description TEXT DEFAULT NULL
-                        );
-                    """.trimIndent()
-
-                        else -> """
-                        CREATE TABLE IF NOT EXISTS teams (
-                            id INT AUTO_INCREMENT PRIMARY KEY,
-                            name VARCHAR(32) UNIQUE NOT NULL,
-                            leader_uuid CHAR(36) NOT NULL,
-                            format VARCHAR(128) UNIQUE,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            description TEXT DEFAULT NULL 
-                        );
-                    """.trimIndent()
-                    }
-                    statement.executeUpdate(createTeamsTable)
-                    logger.debug("Table 'teams' created successfully.")
-
-                    val createTeamMembersTable = when (dbType) {
-                        "sqlite" -> """
-                        CREATE TABLE IF NOT EXISTS team_members (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            team_id INT NOT NULL,
-                            player_uuid CHAR(36) NOT NULL,
-                            role TEXT CHECK(role IN ('LEADER', 'MANAGER', 'MEMBER')) NOT NULL DEFAULT 'MEMBER',
-                            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
-                            UNIQUE (player_uuid)
-                        );
-                    """.trimIndent()
-
-                        "postgresql" -> """
-                        CREATE TABLE IF NOT EXISTS team_members (
-                            id SERIAL PRIMARY KEY,
-                            team_id INT NOT NULL,
-                            player_uuid CHAR(36) NOT NULL,
-                            role VARCHAR(10) CHECK(role IN ('LEADER', 'MANAGER', 'MEMBER')) NOT NULL DEFAULT 'MEMBER',
-                            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
-                            UNIQUE (player_uuid)
-                        );
-                    """.trimIndent()
-
-                        "h2" -> """
-                        CREATE TABLE IF NOT EXISTS team_members (
-                            id INT AUTO_INCREMENT PRIMARY KEY,
-                            team_id INT NOT NULL,
-                            player_uuid CHAR(36) NOT NULL,
-                            role VARCHAR(10) CHECK(role IN ('LEADER', 'MANAGER', 'MEMBER')) NOT NULL DEFAULT 'MEMBER',
-                            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
-                            UNIQUE (player_uuid)
-                        );
-                    """.trimIndent()
-
-                        else -> """
-                        CREATE TABLE IF NOT EXISTS team_members (
-                            id INT AUTO_INCREMENT PRIMARY KEY,
-                            team_id INT NOT NULL,
-                            player_uuid CHAR(36) NOT NULL,
-                            role ENUM('LEADER', 'MANAGER', 'MEMBER') NOT NULL DEFAULT 'MEMBER',
-                            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
-                            UNIQUE (player_uuid)
-                        );
-
-                    """.trimIndent()
-                    }
-                    statement.executeUpdate(createTeamMembersTable)
-                    logger.debug("Table 'team_members' created successfully.")
-                } catch (ex: SQLException) {
-                    logger.err("Error creating tables: ${ex.message}")
+                    else -> """
+                    CREATE TABLE IF NOT EXISTS teams (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        name VARCHAR(32) UNIQUE NOT NULL,
+                        leader_uuid CHAR(36) NOT NULL,
+                        format VARCHAR(128) UNIQUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        description TEXT DEFAULT NULL
+                    );
+                """.trimIndent()
                 }
+                statement.executeUpdate(createTeamsTable)
+                logger.debug("Table 'teams' created successfully.")
+
+                val createTeamMembersTable = when (dbType) {
+                    DatabaseType.SQLITE -> """
+                    CREATE TABLE IF NOT EXISTS team_members (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        team_id INT NOT NULL,
+                        player_uuid CHAR(36) NOT NULL,
+                        role TEXT CHECK(role IN ('LEADER', 'MANAGER', 'MEMBER')) NOT NULL DEFAULT 'MEMBER',
+                        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                        UNIQUE (player_uuid)
+                    );
+                """.trimIndent()
+
+                    DatabaseType.POSTGRESQL -> """
+                    CREATE TABLE IF NOT EXISTS team_members (
+                        id SERIAL PRIMARY KEY,
+                        team_id INT NOT NULL,
+                        player_uuid CHAR(36) NOT NULL,
+                        role VARCHAR(10) CHECK(role IN ('LEADER', 'MANAGER', 'MEMBER')) NOT NULL DEFAULT 'MEMBER',
+                        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                        UNIQUE (player_uuid)
+                    );
+                """.trimIndent()
+
+                    else -> """
+                    CREATE TABLE IF NOT EXISTS team_members (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        team_id INT NOT NULL,
+                        player_uuid CHAR(36) NOT NULL,
+                        role ENUM('LEADER', 'MANAGER', 'MEMBER') NOT NULL DEFAULT 'MEMBER',
+                        joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE,
+                        UNIQUE (player_uuid)
+                    );
+
+                """.trimIndent()
+                }
+                statement.executeUpdate(createTeamMembersTable)
+                logger.debug("Table 'team_members' created successfully.")
             }
-        } ?: logger.err("No database connection available.")
+        }
         logger.debug("Table creation operations completed.")
     }
 
@@ -318,25 +157,23 @@ class DatabaseHandler(private val plugin: TeamX) {
      * @return
      */
     fun addTeam(name: String, leaderUuid: String, description: String?): Boolean {
-        val format = plugin.config.getString("team.default-format") ?: ""
         val cleanName = plugin.messageHandler.getPlainText(Component.text(name))
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 logger.debug("Database connection established from addTeam")
                 val query = """
                 INSERT INTO teams (name, leader_uuid, format, created_at, description)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP, ?)
+                VALUES (?, ?, NULL, CURRENT_TIMESTAMP, ?)
             """.trimIndent()
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, cleanName)
                     preparedStatement.setString(2, leaderUuid)
-                    preparedStatement.setString(3, format)
-                    preparedStatement.setString(4, description)
+                    preparedStatement.setString(3, description)
                     preparedStatement.executeUpdate()
                     plugin.logger.debug("Team $name added to the database.")
                     true
                 }
-            } ?: throw SQLException("No connection available")
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to add team $name. ${e.message}")
             false
@@ -355,14 +192,14 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun updateTeamName(teamId: Int, newName: String): Boolean {
         val query = "UPDATE teams SET name = ? WHERE id = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, newName)
                     preparedStatement.setInt(2, teamId)
                     val rowsAffected = preparedStatement.executeUpdate()
                     rowsAffected > 0
                 }
-            } ?: false
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to update team name for team ID: $teamId. ${e.message}")
             false
@@ -381,14 +218,14 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun updateTeamFormat(teamId: Int, newFormat: String): Boolean {
         val query = "UPDATE teams SET format = ? WHERE id = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, newFormat)
                     preparedStatement.setInt(2, teamId)
                     val rowsAffected = preparedStatement.executeUpdate()
                     rowsAffected > 0
                 }
-            } ?: false
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to update team name for team ID: $teamId. ${e.message}")
             false
@@ -398,14 +235,14 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun updateTeamDescription(teamId: Int, newDescription: String): Boolean {
         val query = "UPDATE teams SET description = ? WHERE id = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, newDescription)
                     preparedStatement.setInt(2, teamId)
                     val rowsAffected = preparedStatement.executeUpdate()
                     rowsAffected > 0
                 }
-            } ?: false
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to update team description for team ID: $teamId. ${e.message}")
             false
@@ -423,13 +260,13 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun isTeamNameExists(teamName: String): Boolean {
         val query = "SELECT COUNT(*) FROM teams WHERE name = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, teamName)
                     val resultSet = preparedStatement.executeQuery()
                     resultSet.next() && resultSet.getInt(1) > 0
                 }
-            } ?: false
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to check if team name exists: ${e.message}")
             false
@@ -448,7 +285,7 @@ class DatabaseHandler(private val plugin: TeamX) {
      */
     fun removeTeam(teamIdentifier: Int, byName: Boolean = true): Boolean {
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 logger.debug("Database connection established from removeTeam")
                 val query = if (byName) {
                     "DELETE FROM teams WHERE name = ?"
@@ -470,7 +307,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                         false
                     }
                 }
-            } ?: throw SQLException("No connection available")
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to remove team with identifier: $teamIdentifier. ${e.message}")
             false
@@ -482,7 +319,7 @@ class DatabaseHandler(private val plugin: TeamX) {
         val teamNames = mutableListOf<String>()
 
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     val resultSet = preparedStatement.executeQuery()
                     while (resultSet.next()) {
@@ -490,7 +327,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                     }
                 }
                 teamNames
-            } ?: emptyList()
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to retrieve team names. ${e.message}")
             emptyList()
@@ -499,7 +336,7 @@ class DatabaseHandler(private val plugin: TeamX) {
 
     fun getTeamByUUID(playerUuid: String): Array<String>? {
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 logger.debug("Database connection established from getTeamByUUID")
 
                 val teamIdQuery = "SELECT team_id FROM team_members WHERE player_uuid = ?"
@@ -531,9 +368,11 @@ class DatabaseHandler(private val plugin: TeamX) {
                             resultSet.getString("id"),
                             resultSet.getString("name"),
                             resultSet.getString("leader_uuid"),
-                            resultSet.getString("format"),
+                            resultSet.getString("format")
+                                ?: plugin.config.getString("team.default-format")
+                                ?: plugin.config.getString("default-format").orEmpty(),
                             resultSet.getString("created_at"),
-                            resultSet.getString("description")
+                            resultSet.getString("description").orEmpty()
                         )
                         plugin.logger.debug("Team data retrieved for player UUID: $playerUuid")
                         teamData
@@ -542,7 +381,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                         null
                     }
                 }
-            } ?: throw SQLException("No connection available")
+            }
         } catch (e: SQLException) {
             plugin.logger.debug("Failed to retrieve team for player UUID: $playerUuid. ${e.message}")
             null
@@ -552,7 +391,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun getTeamByName(name: String): Array<String>? {
         val query = "SELECT * FROM teams WHERE name = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, name)
                     val resultSet = preparedStatement.executeQuery()
@@ -562,7 +401,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                             resultSet.getString("name"),
                             resultSet.getString("leader_uuid"),
                             resultSet.getString("created_at"),
-                            resultSet.getString("description")
+                            resultSet.getString("description").orEmpty()
                         )
                         plugin.logger.debug("Team data retrieved for team name: $name")
                         teamData
@@ -571,7 +410,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                         null
                     }
                 }
-            } ?: throw SQLException("No connection available")
+            }
         } catch (e: SQLException) {
             plugin.logger.debug("Failed to retrieve team for name: $name. ${e.message}")
             null
@@ -581,7 +420,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun addPlayerToTeam(teamId: Int, playerUuid: String): Boolean {
         val query = "INSERT INTO team_members (team_id, player_uuid, joined_at) VALUES (?, ?, CURRENT_TIMESTAMP)"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setInt(1, teamId)
                     preparedStatement.setString(2, playerUuid)
@@ -589,7 +428,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                     plugin.logger.debug("Player $playerUuid added to team ID $teamId.")
                     true
                 }
-            } ?: throw SQLException("No connection available")
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to add player $playerUuid to team ID $teamId. ${e.message}")
             false
@@ -599,7 +438,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun removePlayerFromTeam(teamId: Int, playerUuid: String): Boolean {
         val query = "DELETE FROM team_members WHERE team_id = ? AND player_uuid = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setInt(1, teamId)
                     preparedStatement.setString(2, playerUuid)
@@ -612,7 +451,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                         false
                     }
                 }
-            } ?: throw SQLException("No connection available")
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to remove player $playerUuid from team ID $teamId. ${e.message}")
             false
@@ -624,7 +463,7 @@ class DatabaseHandler(private val plugin: TeamX) {
         val query = "SELECT COUNT(*) FROM team_members WHERE team_id = ?"
 
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setInt(1, teamId)
                     val resultSet = preparedStatement.executeQuery()
@@ -634,7 +473,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                         0
                     }
                 }
-            } ?: 1
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to get member count for team with leader UUID: $leaderUuid. ${e.message}")
             0
@@ -644,14 +483,14 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun setTeamLeader(teamId: Int, newLeaderUuid: String): Boolean {
         val query = "UPDATE teams SET leader_uuid = ? WHERE id = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, newLeaderUuid)
                     preparedStatement.setInt(2, teamId)
                     val rowsAffected = preparedStatement.executeUpdate()
                     rowsAffected > 0
                 }
-            } ?: false
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to set team leader for team ID: $teamId. ${e.message}")
             false
@@ -664,7 +503,7 @@ class DatabaseHandler(private val plugin: TeamX) {
         val query = "SELECT player_uuid FROM team_members WHERE team_id = ?"
 
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setInt(1, teamId)
                     val resultSet = preparedStatement.executeQuery()
@@ -674,7 +513,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                     }
                     uuids
                 }
-            } ?: emptyList()
+            }
         } catch (e: SQLException) {
             plugin.logger.err("Failed to get member UUIDs for team with leader UUID: $leaderUuid. ${e.message}")
             emptyList()
@@ -685,7 +524,7 @@ class DatabaseHandler(private val plugin: TeamX) {
         val query = "SELECT id FROM teams WHERE leader_uuid = ?"
 
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setString(1, leaderUuid)
                     val resultSet = preparedStatement.executeQuery()
@@ -705,7 +544,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun getLeaderByTeamId(teamId: Int): String? {
         val query = "SELECT leader_uuid FROM teams WHERE id = ?"
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setInt(1, teamId)
                     val resultSet = preparedStatement.executeQuery()
@@ -727,7 +566,7 @@ class DatabaseHandler(private val plugin: TeamX) {
         val members = mutableListOf<String>()
 
         return try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
                     preparedStatement.setInt(1, teamId)
                     val resultSet = preparedStatement.executeQuery()
@@ -754,7 +593,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun exportDatabase() {
         val tables = listOf("teams", "team_members")
         try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 val dumpDir = File(plugin.dataFolder, "dump")
                 if (!dumpDir.exists()) {
                     dumpDir.mkdirs()
@@ -810,7 +649,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     fun importDatabase() {
         val filePath = File(plugin.dataFolder, "dump/backup.sql").absolutePath
         try {
-            getConnection()?.use { conn ->
+            database.withConnection { conn ->
                 val lines = File(filePath).readLines()
                 val statement = conn.createStatement()
                 val sql = StringBuilder()

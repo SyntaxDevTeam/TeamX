@@ -14,28 +14,13 @@ import java.util.concurrent.CompletableFuture
 class TeamPowerCalculator(private val plugin: TeamX, private val luckPerms: LuckPerms) {
 
     fun calculateTeamPower(teamId: Int): Int {
-        val teamMembers = plugin.databaseHandler.getTeamMembers(teamId)
-        var totalPower = 0
-
-        for (memberUUID in teamMembers) {
-            val playerName = plugin.uuidManager.getPlayerName(memberUUID) ?: continue
-            val uuid = plugin.uuidManager.getUUID(playerName)
-            val player = Bukkit.getPlayer(uuid)
-            if (player != null) {
-                totalPower += getPlayerPower(player)
-            } else {
-                val user = luckPerms.userManager.loadUser(uuid)
-                totalPower += getOfflinePlayerPower(user)
-            }
-
-            val leaderUUID = plugin.databaseHandler.getLeaderByTeamId(teamId)
-            val leaderName = leaderUUID?.let { plugin.uuidManager.getPlayerName(it) }
-            val realLeaderUUID = leaderName?.let { plugin.uuidManager.getUUID(it) }
-            val leader = luckPerms.userManager.loadUser(realLeaderUUID!!)
-            totalPower += getOfflinePlayerPower(leader)
+        val members = plugin.databaseHandler.getTeamMembers(teamId)
+        val leader = plugin.databaseHandler.getLeaderByTeamId(teamId)
+        return (members + listOfNotNull(leader)).distinct().sumOf { member ->
+            val uuid = java.util.UUID.fromString(member)
+            Bukkit.getPlayer(uuid)?.let(::getPlayerPower)
+                ?: getOfflinePlayerPower(luckPerms.userManager.loadUser(uuid))
         }
-
-        return totalPower
     }
 
     private fun getPlayerPower(player: Player): Int {

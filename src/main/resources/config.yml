@@ -1,4 +1,4 @@
-### Config version 1.0.0
+config-version: 101
 
 # Default format for new added teams
 default-format: "&8&l"
@@ -79,7 +79,7 @@ Placeholders:
 
 # Settings for connecting to the database
 database:
-  # Available options: mariadb, mysql, postgresql, sqlite, h2
+  # Available options: mariadb, mysql, postgresql, sqlite
   type: "sqlite"
   sql:
     host: "localhost"
@@ -93,8 +93,9 @@ database:
 language: "EN"
 
 # Update check and auto-update settings
-checkForUpdates: true
-autoDownloadUpdates: false
+update:
+  check-for-updates: true
+  auto-download: false
 
 # Debug mode set to true provides more detailed logs in the console
 debug: false
