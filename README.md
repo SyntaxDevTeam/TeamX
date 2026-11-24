@@ -24,7 +24,9 @@ TeamX gives Minecraft SMP players a place to form a clan, recruit members and bu
 | Feature | What it adds to your server |
 | --- | --- |
 | **Clans and invitations** | Create a clan, send invitations and manage members. Staff can change leaders, move membership and help resolve ownership issues. |
-| **Clan identity** | Customize the clan name, description and display format. Use PlaceholderAPI to show clan details in plugins that support its placeholders. |
+| **Clan identity** | Customize the clan name, unique short tag, description and display format. Use PlaceholderAPI to show clan details in plugins that support its placeholders. |
+| **Clan panel** | Open `/team` to browse clans, manage members and their specializations, and edit clan settings. |
+| **Clan home and communication** | Set a shared base, send private messages and share your coordinates with clanmates. |
 | **Plot lookup** | Run `/team plots` to see the plots you can access through PlotsX. |
 | **Permission-based team power** | Use LuckPerms to give members power values that TeamX can expose through PlaceholderAPI. |
 | **Name moderation** | With CleanerX installed, TeamX checks names when players create or rename clans. |
@@ -34,7 +36,7 @@ TeamX gives Minecraft SMP players a place to form a clan, recruit members and bu
 
 Open a run on `main` with a successful **Build and verify** job in **[GitHub Actions](https://github.com/SyntaxDevTeam/TeamX/actions/workflows/buildexplorer.yml)**. Download the **TeamX** artifact and extract `TeamX-<version>.jar`. GitHub requires you to sign in to download workflow artifacts.
 
-TeamX is currently a development build. **Paper 26.1.1** has been smoke-tested locally. Folia support is declared and still needs a server test. Use the Java version required by your server. The plugin targets Java 21.
+TeamX is currently a development build. The clan panel, formatting editor and core clan commands have been smoke-tested locally on **Paper 1.21.10**, **Folia 1.21.8** and **Purpur 1.21.10**. Use the Java version required by your server. The plugin targets Java 21.
 
 ## Quick start
 
@@ -43,9 +45,9 @@ TeamX is currently a development build. **Paper 26.1.1** has been smoke-tested l
 3. Grant `teamx.cmd.team` for access to `/team`. Add `teamx.cmd.team.create` and `teamx.cmd.team.invite` to let players start and grow a clan. Grant `teamx.cmd.basic` to let players accept or decline invitations and leave their clan.
 4. Try `/team create "Castle Guard" Wardens of the eastern gate`, then `/team invite Alex`. Alex can join with `/team accept`.
 
-LuckPerms, PlaceholderAPI, PlotsX and CleanerX are optional. For runtime reloads on Paper, use a PlugManX version that supports Paper plugins. TeamX was smoke-tested with PlugManX 3.2.1.
+LuckPerms, PlaceholderAPI, PlotsX, CleanerX and Vault/VaultUnlocked are optional. Vault with an economy provider is required when a name or tag change has a positive fee. For runtime reloads on Paper, use a PlugManX version that supports Paper plugins. TeamX was smoke-tested with PlugManX 3.2.1.
 
-Existing SQLite installations retain their database file and tables. If you are upgrading from H2, transfer your data to a supported database before installing this build.
+Start with a backup before upgrading. The startup migration assigns unique tags to existing clans and reconciles the founder with the membership table while preserving clan IDs, names, descriptions and display formats. If you are upgrading from H2, transfer your data to a supported database before installing this build.
 
 ## Commands and permissions
 
@@ -53,17 +55,28 @@ All `/team` subcommands require `teamx.cmd.team` in addition to any permission s
 
 | Task | Command | Additional permission |
 | --- | --- | --- |
+| Open the clan panel | `/team` | Access to `/team` |
 | Create a clan | `/team create <name> [description]` | `teamx.cmd.team.create` |
-| Change clan identity | `/team rename <name>`, `/team description <text>`, `/team format` | `teamx.cmd.team.rename`, `teamx.cmd.team.description`, `teamx.cmd.team.format` |
+| Change clan identity | `/team rename <name>`, `/team tag <tag>`, `/team description <text>`, `/team format` | Matching `teamx.cmd.team.<command>` node |
+| Assign a rank | `/team rank <player> <manager\|elite\|member>` | `teamx.cmd.team.rank` and clan leadership |
+| Assign or clear a specialization | `/team specialization <player> <assassin\|builder\|miner\|alchemist\|none>` | `teamx.cmd.team.specialization` and clan leadership |
+| Set or remove the clan home | `/team sethome`, `/team delhome` | Matching `teamx.cmd.team.<command>` node and Founder or Master rank |
+| Teleport or communicate | `/team home`, `/team ping`, `/team chat [message]` | `teamx.cmd.basic` or the matching `teamx.cmd.team.<command>` node |
 | Invite or remove a member | `/team invite <player>`, `/team kick <player>` | `teamx.cmd.team.invite`, `teamx.cmd.team.kick` |
 | Delete your clan | `/team delete` | `teamx.cmd.team.delete` and clan leadership |
 | Respond to an invitation or leave | `/team accept`, `/team deny`, `/team leave` | `teamx.cmd.basic` or the matching `teamx.cmd.team.accept`, `teamx.cmd.team.deny`, `teamx.cmd.team.leave` node |
 | Browse accessible plots | `/team plots [page]` | Access to `/team` and a running PlotsX instance |
 | Open help | `/team help [page]` | `teamx.cmd.team.help` |
-| Manage clans as staff | `/team admin <adduser\|removeuser\|setleader\|rename\|delete> …` | `teamx.cmd.team.admin` |
+| Manage clans as staff | `/team admin <adduser\|removeuser\|setleader\|rename\|tag\|delete> …` | `teamx.cmd.team.admin` |
 | Inspect or reload TeamX | `/teamx version`, `/teamx reload`, or the `/ltx` alias | `teamx.cmd.ltx` |
 
-`teamx.cmd.team.premium` grants the create, rename, description, format, invite, kick and delete commands. Clan-level checks still apply where a command requires leadership.
+`teamx.cmd.team.creator` grants the management commands listed above. The Founder controls identity, formatting, roles, specializations and clan deletion. Masters can invite, remove Elites and Members, edit the description and manage the home. Elites and Members have the same management permissions. Staff can transfer leadership with `/team admin setleader`.
+
+Tags are 1–8 ASCII letters or digits and are stored in uppercase. Clan names remain independent of tags. Configure fees under `team.fees.rename` and `team.fees.tag`. A paid change requires confirmation. The `teamx.fees.bypass` and `teamx.cmd.team.admin` permissions waive the fee.
+
+Home teleportation uses `team.home.delay-seconds` and cancels on movement or damage during the wait. Enable `team.home.require-plotsx` to require an accessible PlotsX plot when saving a home. `/team chat` toggles private chat until logout, while `/team chat <message>` sends a single message. Coordinate sharing uses `team.ping.cooldown-seconds`. TeamX cancels the public chat event in clan chat mode and filters messages sent with `/team chat <message>` from the standard server command log. Chat bridges must respect event cancellation.
+
+PlaceholderAPI exposes the tag as `%teamx_tag%`. The `{tag}` token is also available in `Placeholders.chat_format.team`.
 
 ## Build from source
 

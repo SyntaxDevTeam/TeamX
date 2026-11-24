@@ -35,19 +35,19 @@ class TeamXCommands(private val plugin: TeamX) {
         .then(Commands.literal("reload").executes {
             plugin.onReload()
             it.source.sender.sendMessage(mH.teamMessage("reload", "success"))
-            plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+            plugin.operations.submit { plugin.teamCacheManager.refreshCacheForOnlinePlayers() }
             1
         })
         .then(Commands.literal("export")
             .requires { it.sender.hasPermission("consentchecker.cmd.export") }
             .executes {
-                plugin.databaseHandler.exportDatabase()
+                plugin.operations.submit { plugin.databaseHandler.exportDatabase() }
                 1
             })
         .then(Commands.literal("import")
             .requires { it.sender.hasPermission("consentchecker.cmd.import") }
             .executes {
-                plugin.databaseHandler.importDatabase()
+                plugin.operations.submit { plugin.databaseHandler.importDatabase(); plugin.teamCacheManager.refreshCacheForOnlinePlayers() }
                 1
             })
         .build()

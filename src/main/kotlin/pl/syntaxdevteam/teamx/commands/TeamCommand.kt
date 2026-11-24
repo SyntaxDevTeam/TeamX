@@ -13,33 +13,57 @@ import io.papermc.paper.command.brigadier.Commands
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
 import pl.syntaxdevteam.teamx.TeamX
-import pl.syntaxdevteam.teamx.basic.TextSanitizer
-import pl.syntaxdevteam.teamx.gui.InitialSelectionGUI
+import pl.syntaxdevteam.teamx.clans.TextSanitizer
+import net.kyori.adventure.text.event.ClickEvent
+import pl.syntaxdevteam.teamx.clans.ClanRank
+import pl.syntaxdevteam.teamx.clans.Specialization
+import pl.syntaxdevteam.teamx.databases.ClanSchema
+import pl.syntaxdevteam.teamx.hooks.IdentityPayment
 import pl.syntaxdevteam.teamx.hooks.CleanerXHook
 import pl.syntaxdevteam.teamx.hooks.PlotsXHook
 import pl.syntaxdevteam.teamx.messages.teamMessage
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
 
 class TeamCommand(private val plugin: TeamX) {
     private val mH get() = plugin.messageHandler
     private val db get() = plugin.databaseHandler
+    // Accessed only by the clan database worker.
+    private data class FeeConfirmation(
+        val clanId: Int, val operation: String, val value: String, val amount: Double, val expires: Long
+    )
+
+    private val feeConfirmations = mutableMapOf<UUID, FeeConfirmation>()
+    private val creatorPermission = "teamx.cmd.team.creator"
     private val maxNameLength get() = plugin.config.getInt("team.max-name-length", 16)
 
     fun build(): LiteralCommandNode<CommandSourceStack> = Commands.literal("team")
         .requires { plugin.isEnabled && it.sender.hasPermission("teamx.cmd.team") }
-        .executes { showHelp(it, 1) }
+        .executes { if (it.source.sender is Player) runAsPlayer(it, plugin.menus::open) else showHelp(it, 1) }
         .then(helpCommand())
         .then(plotsCommand())
         .then(createCommand())
-        .then(renameCommand())
+        .then(identityCommand("rename"))
+        .then(identityCommand("tag"))
+        .then(memberCommand("rank", ClanRank.entries.filter { it != ClanRank.LEADER }.map { it.name.lowercase() }))
+        .then(memberCommand("specialization", Specialization.entries.map { it.name.lowercase() } + "none"))
+        .then(basic("home").executes { runAsPlayer(it, plugin.clanTeleport::teleport) })
+        .then(creator("sethome").executes { runAsPlayer(it) { player -> plugin.clanTeleport.setHome(player, true) } })
+        .then(creator("delhome").executes { runAsPlayer(it) { player -> plugin.clanTeleport.setHome(player, false) } })
+        .then(basic("ping").executes { runAsPlayer(it, plugin.clanPing::ping) })
+        .then(basic("chat").executes { runAsPlayer(it, plugin.clanChat::toggleChat) }
+            .then(Commands.argument("message", StringArgumentType.greedyString()).executes { context ->
+                runAsPlayer(context) { plugin.clanChat.chat(it, text(context, "message")) }
+            }))
         .then(descriptionCommand())
-        .then(premium("format").executes { runAsPlayer(it, ::openFormatMenu) })
-        .then(premium("delete").executes { runAsPlayer(it, ::deleteTeam) })
+        .then(creator("format").executes { runAsPlayer(it, plugin.menus::openFormat) })
+        .then(creator("delete").executes { runDatabase(it, ::deleteTeam) })
         .then(kickCommand())
         .then(inviteCommand())
-        .then(basic("accept").executes { runAsPlayer(it, ::acceptInvitation) })
-        .then(basic("deny").executes { runAsPlayer(it, ::declineInvitation) })
-        .then(basic("leave").executes { runAsPlayer(it, ::leaveTeam) })
+        .then(basic("accept").executes { runDatabase(it, ::acceptInvitation) })
+        .then(basic("deny").executes { runDatabase(it, ::declineInvitation) })
+        .then(basic("leave").executes { runDatabase(it, ::leaveTeam) })
         .then(admin())
         .build()
 
@@ -59,49 +83,126 @@ class TeamCommand(private val plugin: TeamX) {
             }
         )
 
-    private fun createCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("create")
+    private fun createCommand(): LiteralArgumentBuilder<CommandSourceStack> = creator("create")
         .executes { usage(it, "team", "create_usage") }
         .then(
             Commands.argument("name", StringArgumentType.string())
-                .executes { context -> runAsPlayer(context) { createTeam(it, text(context, "name"), "") } }
+                .executes { context -> runDatabase(context) { createTeam(it, text(context, "name"), "") } }
                 .then(
                     Commands.argument("description", StringArgumentType.greedyString()).executes { context ->
-                        runAsPlayer(context) { player ->
+                        runDatabase(context) { player ->
                             createTeam(player, text(context, "name"), text(context, "description"))
                         }
                     }
                 )
         )
 
-    private fun renameCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("rename")
-        .executes { usage(it, "team", "rename_usage") }
-        .then(
-            Commands.argument("name", StringArgumentType.string()).executes { context ->
-                runAsPlayer(context) { renameTeam(it, text(context, "name")) }
-            }
-        )
+    private fun identityCommand(name: String): LiteralArgumentBuilder<CommandSourceStack> = creator(name)
+        .executes { usage(it, if (name == "rename") "team" else "clan", "${name}_usage") }
+        .then(Commands.argument("value", StringArgumentType.string())
+            .executes { identity(it, name, false) }
+            .then(Commands.literal("confirm").executes { identity(it, name, true) }))
 
-    private fun descriptionCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("description")
+    private fun identity(context: CommandContext<CommandSourceStack>, operation: String, confirmed: Boolean): Int =
+        runAsPlayer(context) { player ->
+            val bypass = player.hasPermission("teamx.fees.bypass") || player.hasPermission("teamx.cmd.team.admin")
+            val input = text(context, "value")
+            val path = "team.fees.$operation"
+            val fee = if (bypass) 0.0 else plugin.config.getDouble(path)
+            plugin.operations.submit(player) {
+                val team = plugin.operations.managedClan(player) ?: return@submit
+                val value = if (operation == "tag") ClanSchema.normalizeTag(input) else validateTeamName(player, input)
+                if (value == null) {
+                    if (operation == "tag") tell(player, "tag_usage")
+                    return@submit
+                }
+                if (!fee.isFinite() || fee < 0) return@submit tell(player, "failed")
+                val id = team[0].toInt()
+                if (fee > 0) {
+                    val now = System.nanoTime()
+                    feeConfirmations.entries.removeIf { now - it.value.expires >= 0 }
+                    val pending = feeConfirmations.remove(player.uniqueId)
+                    val expected = FeeConfirmation(id, operation, value, fee, now + TimeUnit.SECONDS.toNanos(30))
+                    if (!confirmed || pending?.copy(expires = expected.expires) != expected) {
+                        feeConfirmations[player.uniqueId] = expected
+                        val command = "/team $operation ${StringArgumentType.escapeIfRequired(value)} confirm"
+                        player.sendMessage(mH.teamMessage("clan", "confirm_fee", mapOf("amount" to fee.toString()))
+                            .clickEvent(ClickEvent.runCommand(command)))
+                        return@submit
+                    }
+                }
+                val payment = if (fee > 0) IdentityPayment(plugin, player, fee) else null
+                var attempted = false
+                val charge: (() -> Boolean)? = payment?.let {
+                    { attempted = true; it.withdraw() }
+                }
+                val updated = try {
+                    if (operation == "tag") db.updateTeamTag(id, value, charge)
+                    else db.updateTeamName(id, value, charge)
+                } catch (failure: Exception) {
+                    payment?.refund()
+                    throw failure
+                }
+                if (!updated) {
+                    payment?.refund()
+                    tell(player, if (attempted) payment?.error ?: "failed" else "identity_failed")
+                    return@submit
+                }
+                plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+                player.sendMessage(mH.teamMessage("clan", "identity_updated", mapOf("value" to value)))
+            }
+        }
+
+    private fun memberCommand(name: String, options: List<String>) = creator(name)
+        .executes { usage(it, "clan", "${name}_usage") }
+        .then(playerArgument().then(Commands.argument("value", StringArgumentType.word())
+            .suggests { _, builder -> suggestNames(builder, options) }
+            .executes { context ->
+                runDatabase(context) { player ->
+                    val team = plugin.operations.managedClan(player) ?: return@runDatabase
+                    val option = text(context, "value").lowercase()
+                    if (option !in options) return@runDatabase tell(player, "${name}_usage")
+                    val target = resolvePlayer(player, text(context, "player")) ?: return@runDatabase
+                    val id = team[0].toInt()
+                    val changed = if (name == "rank") db.setRank(id, target, ClanRank.valueOf(option.uppercase()))
+                    else db.setSpecialization(id, target, option.takeUnless { it == "none" }?.uppercase()?.let(Specialization::valueOf))
+                    if (changed) plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+                    tell(player, if (changed) "member_updated" else "failed")
+                }
+            }))
+
+    private fun tell(sender: CommandSender, key: String) = sender.sendMessage(mH.teamMessage("clan", key))
+
+    private fun resolvePlayer(sender: CommandSender, name: String): UUID? {
+        val uuid = runCatching { UUID.fromString(name) }.getOrNull()
+            ?: plugin.server.getPlayerExact(name)?.uniqueId
+            ?: plugin.server.getOfflinePlayerIfCached(name)?.uniqueId
+            ?: plugin.uuidManager.getUUID(name).takeIf { plugin.server.getOfflinePlayer(it).hasPlayedBefore() }
+        if (uuid == null) sender.sendMessage(mH.teamMessage("error", "player_not_found", mapOf("player" to name)))
+        return uuid
+    }
+
+    private fun descriptionCommand(): LiteralArgumentBuilder<CommandSourceStack> = creator("description")
         .executes { usage(it, "team", "description_usage") }
         .then(
             Commands.argument("description", StringArgumentType.greedyString()).executes { context ->
-                runAsPlayer(context) { updateDescription(it, text(context, "description")) }
+                runDatabase(context) { updateDescription(it, text(context, "description")) }
             }
         )
 
-    private fun kickCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("kick")
+    private fun kickCommand(): LiteralArgumentBuilder<CommandSourceStack> = creator("kick")
         .executes { usage(it, "team", "kick_usage") }
         .then(
             playerArgument().executes { context ->
-                runAsPlayer(context) { kickPlayer(it, text(context, "player")) }
+                runDatabase(context) { kickPlayer(it, text(context, "player")) }
             }
         )
 
-    private fun inviteCommand(): LiteralArgumentBuilder<CommandSourceStack> = premium("invite")
+    private fun inviteCommand(): LiteralArgumentBuilder<CommandSourceStack> = creator("invite")
         .executes { usage(it, "invitation", "usage") }
         .then(
             playerArgument().executes { context ->
-                runAsPlayer(context) { invitePlayer(it, text(context, "player")) }
+                runDatabase(context) { invitePlayer(it, text(context, "player")) }
             }
         )
 
@@ -123,6 +224,19 @@ class TeamCommand(private val plugin: TeamX) {
                     .executes { context ->
                         withTeam(context) { sender, id, _ -> adminRenameTeam(sender, id, text(context, "name")) }
                     })))
+        .then(Commands.literal("tag")
+            .executes(::adminUsage)
+            .then(teamArgument().then(Commands.argument("tag", StringArgumentType.word()).executes { context ->
+                withTeam(context) { sender, id, _ ->
+                    val tag = ClanSchema.normalizeTag(text(context, "tag"))
+                    if (tag == null) tell(sender, "tag_usage")
+                    else if (!db.updateTeamTag(id, tag)) tell(sender, "identity_failed")
+                    else {
+                        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+                        sender.sendMessage(mH.teamMessage("clan", "identity_updated", mapOf("value" to tag)))
+                    }
+                }
+            })))
         .then(Commands.literal("delete")
             .executes(::adminUsage)
             .then(teamArgument().executes { withTeam(it, ::adminDeleteTeam) }))
@@ -137,7 +251,7 @@ class TeamCommand(private val plugin: TeamX) {
                 withTeam(context) { sender, id, team -> action(sender, id, team, text(context, "player")) }
             }))
 
-    private fun premium(name: String) = permitted(name, "teamx.cmd.team.premium")
+    private fun creator(name: String) = permitted(name, creatorPermission)
 
     private fun basic(name: String) = permitted(name, "teamx.cmd.basic")
 
@@ -153,7 +267,7 @@ class TeamCommand(private val plugin: TeamX) {
 
     private fun teamArgument(): RequiredArgumentBuilder<CommandSourceStack, String> =
         Commands.argument("team", StringArgumentType.string()).suggests { _, builder ->
-            suggestNames(builder, db.getTeamList())
+            CompletableFuture.supplyAsync { suggestNames(builder, db.getTeamList()).join() }
         }
 
     private fun suggestNames(
@@ -189,14 +303,19 @@ class TeamCommand(private val plugin: TeamX) {
     ): Int {
         val sender = context.source.sender
         val teamName = text(context, "team")
-        val team = db.getTeamByName(teamName)
-        if (team == null) {
-            sender.sendMessage(mH.teamMessage("error", "not_found", mapOf("team_name" to teamName)))
-            return 0
+        plugin.operations.submit(sender) {
+            val team = db.getTeamByName(teamName)
+            if (team == null) {
+                sender.sendMessage(mH.teamMessage("error", "not_found", mapOf("team_name" to teamName)))
+            } else {
+                action(sender, team[0].toInt(), teamName)
+            }
         }
-        action(sender, team[0].toInt(), teamName)
         return 1
     }
+
+    private fun runDatabase(context: CommandContext<CommandSourceStack>, action: (Player) -> Unit): Int =
+        runAsPlayer(context) { player -> plugin.operations.submit(player) { action(player) } }
 
     private fun showPlots(sender: Player, page: Int) {
         val uuid = sender.uniqueId
@@ -237,38 +356,11 @@ class TeamCommand(private val plugin: TeamX) {
         sender.sendMessage(mH.teamMessage("team", "created", mapOf("team_name" to cleanName)))
         plugin.logger.debug("Player ${sender.name} created a team:")
         plugin.logger.debug("Description: $description")
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
-    }
-
-    private fun renameTeam(sender: Player, name: String) {
-        val uuid = sender.uniqueId
-        val newName = validateTeamName(sender, name) ?: return
-        val teamData = db.getTeamByUUID(uuid.toString())
-        if (teamData == null) {
-            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-            return
-        }
-        val teamId = teamData[0].toInt()
-        if (db.isTeamNameExists(newName)) {
-            sender.sendMessage(mH.teamMessage("team", "rename_exists"))
-            return
-        }
-        if (db.updateTeamName(teamId, newName)) {
-            sender.sendMessage(mH.teamMessage("team", "renamed", mapOf("team_name" to newName)))
-            plugin.logger.debug("Team ID $teamId has been renamed to $newName")
-        } else {
-            sender.sendMessage(mH.teamMessage("team", "rename_failed"))
-        }
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
     }
 
     private fun updateDescription(sender: Player, description: String) {
-        val uuid = sender.uniqueId
-        val teamData = db.getTeamByUUID(uuid.toString())
-        if (teamData == null) {
-            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-            return
-        }
+        val teamData = plugin.operations.managedClan(sender, manager = true) ?: return
         val teamId = teamData[0].toInt()
         if (db.updateTeamDescription(teamId, description)) {
             sender.sendMessage(mH.teamMessage("team", "description_updated"))
@@ -276,89 +368,31 @@ class TeamCommand(private val plugin: TeamX) {
         } else {
             sender.sendMessage(mH.teamMessage("team", "description_failed"))
         }
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
-    }
-
-    private fun openFormatMenu(sender: Player) {
-        val uuid = sender.uniqueId
-        val teamData = db.getTeamByUUID(uuid.toString())
-        if (teamData == null) {
-            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-            return
-        }
-
-        val teamOwnerUUID = teamData[2]
-        if (teamOwnerUUID != uuid.toString()) {
-            sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
-            return
-        }
-
-        InitialSelectionGUI(plugin).open(sender)
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
     }
 
     private fun deleteTeam(sender: Player) {
-        val uuid = sender.uniqueId
-        val teamData = db.getTeamByUUID(uuid.toString())
-        if (teamData == null) {
-            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
-            return
-        }
-        val teamId = teamData[0].toInt()
-        val teamName = teamData[1]
-        val teamLeaderUUID = teamData[2]
-
-        if (teamLeaderUUID != uuid.toString()) {
-            sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
-            return
-        }
-
-        val teamMembers = db.getTeamMembers(teamId)
-        var success = true
-
-        for (memberUuid in teamMembers) {
-            if (!db.removePlayerFromTeam(teamId, memberUuid)) {
-                success = false
-            }
-        }
-
-        if (success && db.removeTeam(teamId, false)) {
-            sender.sendMessage(mH.teamMessage("team", "deleted", mapOf("team_name" to teamName)))
-        } else {
-            sender.sendMessage(mH.teamMessage("team", "delete_failed", mapOf("team_name" to teamName)))
-        }
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+        val team = plugin.operations.managedClan(sender) ?: return
+        adminDeleteTeam(sender, team[0].toInt(), team[1])
     }
 
     private fun kickPlayer(sender: Player, playerName: String) {
-        val uuid = sender.uniqueId
-        val playerUUID = plugin.uuidManager.getUUID(playerName)
-        val teamData = db.getTeamByUUID(playerUUID.toString())
-
-        if (teamData == null) {
-            sender.sendMessage(mH.teamMessage("error", "player_not_in_team", mapOf("player" to playerName)))
-            return
-        }
-
-        val teamId = teamData[0].toInt()
-        val teamName = teamData[1]
-        val teamLeaderUUID = teamData[2]
-
-        if (teamLeaderUUID != uuid.toString()) {
-            sender.sendMessage(mH.teamMessage("error", "not_team_owner"))
-            return
-        }
-
-        if (db.removePlayerFromTeam(teamId, playerUUID.toString())) {
-            sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to teamName)))
-            plugin.server.getPlayer(playerUUID)?.sendMessage(mH.teamMessage("team", "you_kicked", mapOf("team_name" to teamName)))
-        } else {
-            sender.sendMessage(mH.teamMessage("team", "remove_failed", mapOf("player" to playerName, "team_name" to teamName)))
-        }
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+        val team = plugin.operations.managedClan(sender, manager = true) ?: return
+        val target = resolvePlayer(sender, playerName) ?: return
+        val id = team[0].toInt()
+        val members = db.members(id)
+        val member = members.find { it.uuid == target }
+        if (target == sender.uniqueId || member == null || member.rank == ClanRank.LEADER ||
+            (team[2] != sender.uniqueId.toString() && member.rank == ClanRank.MANAGER)
+        ) return tell(sender, "failed")
+        if (!db.removePlayerFromTeam(id, target.toString())) return tell(sender, "failed")
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
+        sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to team[1])))
+        plugin.server.getPlayer(target)?.sendMessage(mH.teamMessage("team", "you_kicked", mapOf("team_name" to team[1])))
     }
 
     private fun invitePlayer(sender: Player, invitedPlayerName: String) {
-        val uuid = sender.uniqueId
+        val teamData = plugin.operations.managedClan(sender, manager = true) ?: return
         val invitedPlayer = plugin.server.getPlayer(invitedPlayerName)
         if (invitedPlayer == null) {
             sender.sendMessage(mH.teamMessage("error", "player_not_found", mapOf("player" to invitedPlayerName)))
@@ -369,12 +403,6 @@ class TeamCommand(private val plugin: TeamX) {
         val existingTeam = db.getTeamByUUID(invitedPlayerUUID.toString())
         if (existingTeam != null) {
             sender.sendMessage(mH.teamMessage("error", "player_already_in_team", mapOf("player" to invitedPlayerName)))
-            return
-        }
-
-        val teamData = db.getTeamByUUID(uuid.toString())
-        if (teamData == null) {
-            sender.sendMessage(mH.teamMessage("error", "no_have_team"))
             return
         }
 
@@ -392,7 +420,6 @@ class TeamCommand(private val plugin: TeamX) {
         }
 
         plugin.invitationManager.acceptInvitation(sender)
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
     }
 
     private fun declineInvitation(sender: Player) {
@@ -421,11 +448,11 @@ class TeamCommand(private val plugin: TeamX) {
         } else {
             sender.sendMessage(mH.teamMessage("team", "leave_failed", mapOf("player" to sender.name, "team_name" to teamName)))
         }
-        plugin.teamCacheManager.loadPlayerTeamData(uuid)
+        plugin.teamCacheManager.refreshCacheForOnlinePlayers()
     }
 
     private fun adminAddPlayer(sender: CommandSender, teamId: Int, teamName: String, playerName: String) {
-        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        val playerUUID = resolvePlayer(sender, playerName) ?: return
         if (db.addPlayerToTeam(teamId, playerUUID.toString())) {
             sender.sendMessage(mH.teamMessage("team", "player_added", mapOf("player" to playerName, "team_name" to teamName)))
         } else {
@@ -435,7 +462,7 @@ class TeamCommand(private val plugin: TeamX) {
     }
 
     private fun adminRemovePlayer(sender: CommandSender, teamId: Int, teamName: String, playerName: String) {
-        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        val playerUUID = resolvePlayer(sender, playerName) ?: return
         if (db.removePlayerFromTeam(teamId, playerUUID.toString())) {
             sender.sendMessage(mH.teamMessage("team", "player_removed", mapOf("player" to playerName, "team_name" to teamName)))
         } else {
@@ -445,7 +472,7 @@ class TeamCommand(private val plugin: TeamX) {
     }
 
     private fun adminSetLeader(sender: CommandSender, teamId: Int, teamName: String, playerName: String) {
-        val playerUUID = plugin.uuidManager.getUUID(playerName)
+        val playerUUID = resolvePlayer(sender, playerName) ?: return
         if (db.setTeamLeader(teamId, playerUUID.toString())) {
             sender.sendMessage(mH.teamMessage("team", "leader_set", mapOf("player" to playerName, "team_name" to teamName)))
         } else {
@@ -470,16 +497,7 @@ class TeamCommand(private val plugin: TeamX) {
     }
 
     private fun adminDeleteTeam(sender: CommandSender, teamId: Int, teamName: String) {
-        val teamMembers = db.getTeamMembers(teamId)
-        var success = true
-
-        for (memberUuid in teamMembers) {
-            if (!db.removePlayerFromTeam(teamId, memberUuid)) {
-                success = false
-            }
-        }
-
-        if (success && db.removeTeam(teamId, false)) {
+        if (db.removeTeam(teamId)) {
             sender.sendMessage(mH.teamMessage("team", "deleted", mapOf("team_name" to teamName)))
         } else {
             sender.sendMessage(mH.teamMessage("team", "delete_failed", mapOf("team_name" to teamName)))
@@ -507,32 +525,34 @@ class TeamCommand(private val plugin: TeamX) {
     }
 
     private fun sendHelp(sender: CommandSender, page: Int) {
-        val isPremium = sender.hasPermission("teamx.cmd.team.premium")
+        val hasBasic = sender.hasPermission("teamx.cmd.basic")
         val isAdmin = sender.hasPermission("teamx.cmd.team.admin")
 
         val commands = mutableListOf(
-            "  <gold>/team plots [page] <gray>- <white>Lists plots you can access through PlotsX.",
-            "  <gold>/team create <name> [description] ",
-            "         <gray>- <white>Creates a team with the given name and description.",
-            "  <gold>/team rename <new_name> <gray>- <white>Changes the team name.",
-            "  <gold>/team description <new_description>",
-            "             <gray>- <white>Changes the team description.",
-            "  <gold>/team format <gray>- <white>Opens a GUI for editing the team format.",
-            "  <gold>/team delete <gray>- <white>Deletes the team",
-            "                          (only the leader can delete their team).",
+            "  <gold>/team <gray>- <white>Open the clan panel.",
+            "  <gold>/team plots [page]",
+            "  <gold>/team create <name> [description]",
+            "  <gold>/team rename <name> [confirm]",
+            "  <gold>/team tag <tag> [confirm]",
+            "  <gold>/team description <text>",
+            "  <gold>/team format",
+            "  <gold>/team delete",
             "  <gold>/team invite <player>",
-            "             <gray>- <white>Sends a team invitation to the specified player ",
-            "                          (only the leader can delete their team).",
-            " ",
-            "  <gold>/team kick <player> <gray>- <white>Removes a player from the team",
-            "                          (only the leader can delete their team).",
+            "  <gold>/team kick <player>",
+            "  <gold>/team rank <player> <manager|elite|member>",
+            "  <gold>/team specialization <player> <assassin|builder|miner|alchemist|none>",
+            "  <gold>/team sethome",
+            "  <gold>/team delhome"
         )
-        if (isPremium){
+        if (hasBasic || listOf("home", "chat", "ping", "accept", "deny", "leave")
+                .any { sender.hasPermission("teamx.cmd.team.$it") }) {
             commands.addAll(listOf(
-                " ",
-                "  <gold>/team accept <gray>- <white>Accepts a team invitation.",
-                "  <gold>/team deny <gray>- <white>Denies a team invitation.",
-                "  <gold>/team leave <gray>- <white>Leaves the team."
+                "  <gold>/team home",
+                "  <gold>/team chat [message]",
+                "  <gold>/team ping",
+                "  <gold>/team accept",
+                "  <gold>/team deny",
+                "  <gold>/team leave"
             ))
         }
 
@@ -548,6 +568,7 @@ class TeamCommand(private val plugin: TeamX) {
                 "                        <gray>- <white>Sets a player as the team leader.",
                 "  <gold>/team admin rename <team_name> <new_name>",
                 "                                   <gray>- <white>Changes the team name.",
+                "  <gold>/team admin tag <team_name> <tag>",
                 "  <gold>/team admin delete <team_name> <gray>- <white>Deletes a team."
             ))
         }

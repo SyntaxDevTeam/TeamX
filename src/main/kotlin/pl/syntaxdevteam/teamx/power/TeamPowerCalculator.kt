@@ -1,4 +1,4 @@
-package pl.syntaxdevteam.teamx.basic
+package pl.syntaxdevteam.teamx.power
 
 import net.luckperms.api.LuckPerms
 import net.luckperms.api.context.ContextManager
@@ -7,21 +7,17 @@ import net.luckperms.api.model.user.User
 import net.luckperms.api.query.QueryOptions
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
-import pl.syntaxdevteam.teamx.TeamX
+import pl.syntaxdevteam.teamx.clans.ClanMember
 import java.util.concurrent.CompletableFuture
 
 
-class TeamPowerCalculator(private val plugin: TeamX, private val luckPerms: LuckPerms) {
+class TeamPowerCalculator(private val luckPerms: LuckPerms) {
 
-    fun calculateTeamPower(teamId: Int): Int {
-        val members = plugin.databaseHandler.getTeamMembers(teamId)
-        val leader = plugin.databaseHandler.getLeaderByTeamId(teamId)
-        return (members + listOfNotNull(leader)).distinct().sumOf { member ->
-            val uuid = java.util.UUID.fromString(member)
-            Bukkit.getPlayer(uuid)?.let(::getPlayerPower)
-                ?: getOfflinePlayerPower(luckPerms.userManager.loadUser(uuid))
+    fun calculateTeamPower(members: List<ClanMember>): Int =
+        members.sumOf { member ->
+            Bukkit.getPlayer(member.uuid)?.let(::getPlayerPower)
+                ?: getOfflinePlayerPower(luckPerms.userManager.loadUser(member.uuid))
         }
-    }
 
     private fun getPlayerPower(player: Player): Int {
         return when {

@@ -8,62 +8,57 @@ import pl.syntaxdevteam.teamx.TeamX
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-
 class TeamCacheManager(private val plugin: TeamX) : Listener {
-    private class Entry(@Volatile var data: CachedTeamData?)
+    @Volatile private var cache = emptyMap<UUID, CachedTeamData>()
+    private val online = ConcurrentHashMap.newKeySet<UUID>()
+    private val database get() = plugin.databaseHandler
 
-    private val database = plugin.databaseHandler
-    private val cache = ConcurrentHashMap<UUID, Entry>()
-
-    fun loadPlayerTeamData(uuid: UUID) {
-        val entry = cache.compute(uuid) { _, previous -> Entry(previous?.data) } ?: return
-        plugin.server.asyncScheduler.runNow(plugin) {
-            val teamData = database.getTeamByUUID(uuid.toString())
-            if (teamData == null || teamData.size < 6) {
-                entry.data = null
-                return@runNow
-            }
-            val teamId = teamData[0].toInt()
-            val name = teamData[1]
-            val leaderUUID = UUID.fromString(teamData[2])
-            val leaderName = plugin.server.getOfflinePlayer(leaderUUID).name.orEmpty()
-            val format = teamData[3]
-            val createdAt = teamData[4]
-            val description = teamData[5]
-
-            val membersUUIDs = database.getMemberUUIDsByUUID(leaderUUID.toString())
-            val members = membersUUIDs.mapNotNull { plugin.server.getOfflinePlayer(UUID.fromString(it)).name }
-
-            val fullName = "$format$name"
-
-            entry.data = CachedTeamData(
-                teamId, name, format, leaderName, description, createdAt,
-                members.size, members, fullName
-            )
-        }
+    fun initialize() {
+        plugin.server.onlinePlayers.forEach { online.add(it.uniqueId) }
+        plugin.operations.submit { refreshCacheForOnlinePlayers() }
     }
 
-    private fun invalidate(uuid: UUID) {
-        cache.remove(uuid)
-    }
-
-    fun get(uuid: UUID): CachedTeamData? = cache[uuid]?.data
-
+    // Called by the serialized database worker, including immediately after a membership mutation.
     fun refreshCacheForOnlinePlayers() {
-        plugin.server.onlinePlayers.forEach { player ->
-            loadPlayerTeamData(player.uniqueId)
+        val clans = mutableMapOf<Int, CachedTeamData>()
+        cache = try {
+            loadSnapshot(clans)
+        } catch (failure: Exception) {
+            plugin.logger.err("Could not refresh clan membership: ${failure.message}")
+            emptyMap()
         }
     }
+
+    private fun loadSnapshot(clans: MutableMap<Int, CachedTeamData>): Map<UUID, CachedTeamData> = buildMap {
+        for (uuid in online) {
+            if (containsKey(uuid)) continue
+            val team = database.getTeamByUUID(uuid.toString()) ?: continue
+            val id = team[0].toInt()
+            val clan = clans.getOrPut(id) {
+                val leader = UUID.fromString(team[2])
+                val roster = database.members(id)
+                val memberNames = roster.filter { it.uuid != leader }.mapNotNull { name(it.uuid) }
+                CachedTeamData(id, team[1], team[3], name(leader).orEmpty(), team[5], team[4],
+                    memberNames.size, memberNames, team[3] + team[1], team[6], leader, roster, database.getHome(id))
+            }
+            clan.roster.filter { it.uuid in online }.forEach { put(it.uuid, clan) }
+            if (uuid in online) put(uuid, clan)
+        }
+    }
+
+    private fun name(uuid: UUID) = plugin.server.getOfflinePlayer(uuid).name
+
+    fun get(uuid: UUID): CachedTeamData? = if (uuid in online) cache[uuid] else null
 
     @EventHandler
     fun onJoin(event: PlayerJoinEvent) {
-        val uuid = event.player.uniqueId
-        loadPlayerTeamData(uuid)
+        online.add(event.player.uniqueId)
+        plugin.operations.submit { refreshCacheForOnlinePlayers() }
     }
 
     @EventHandler
     fun onQuit(event: PlayerQuitEvent) {
-        val uuid = event.player.uniqueId
-        invalidate(uuid)
+        online.remove(event.player.uniqueId)
+        plugin.operations.submit { refreshCacheForOnlinePlayers() }
     }
 }

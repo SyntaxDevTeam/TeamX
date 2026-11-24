@@ -37,6 +37,7 @@ val syntaxCoreBundle by configurations.creating {
 }
 
 dependencies {
+    implementation(libs.triumph.gui) { isTransitive = false }
     syntaxCoreBundle(libs.syntaxcore)
     compileOnly(kotlin("stdlib"))
     compileOnly(libs.syntaxcore)
@@ -45,6 +46,7 @@ dependencies {
     compileOnly(libs.plotsx.api)
     compileOnly("io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT")
     compileOnly("org.eclipse.aether:aether-api:1.1.0")
+    compileOnly("org.apache.logging.log4j:log4j-core:2.26.0")
     compileOnly("net.luckperms:api:5.5")
     compileOnly("me.clip:placeholderapi:2.11.6")
     compileOnly("com.github.milkbowl:VaultAPI:1.7.1")
@@ -78,6 +80,8 @@ tasks.processResources {
 }
 
 tasks.shadowJar {
+    relocate("dev.triumphteam.gui", "pl.syntaxdevteam.teamx.lib.triumph")
+    exclude("net/kyori/**", "org/bukkit/**", "io/papermc/**")
     archiveBaseName.set("TeamX")
     archiveClassifier.set("")
     archiveVersion.set(project.version.toString())

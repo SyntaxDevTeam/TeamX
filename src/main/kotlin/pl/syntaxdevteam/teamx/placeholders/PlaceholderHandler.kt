@@ -1,6 +1,7 @@
-package pl.syntaxdevteam.teamx.basic
+package pl.syntaxdevteam.teamx.placeholders
 
 import pl.syntaxdevteam.teamx.TeamX
+import pl.syntaxdevteam.teamx.power.TeamPowerCalculator
 import me.clip.placeholderapi.expansion.PlaceholderExpansion
 import org.bukkit.entity.Player
 import java.util.UUID
@@ -26,6 +27,7 @@ class PlaceholderHandler(private val plugin: TeamX) : PlaceholderExpansion() {
 
         return when (params) {
             "name" -> getTeamName(player.uniqueId)
+            "tag" -> plugin.teamCacheManager.get(player.uniqueId)?.tag.orEmpty()
             "full_name" -> getTeamFullName(player.uniqueId)
             "format" -> getTeamFormat(player.uniqueId)
             "leader" -> getTeamLeader(player.uniqueId)
@@ -88,7 +90,7 @@ class PlaceholderHandler(private val plugin: TeamX) : PlaceholderExpansion() {
     private fun getTeamPower(uuid: UUID): Int {
         val cached = plugin.teamCacheManager.get(uuid) ?: return 0
         val luckPerms = plugin.hookHandler.luckPerms ?: return 0
-        return TeamPowerCalculator(plugin, luckPerms).calculateTeamPower(cached.teamId)
+        return TeamPowerCalculator(luckPerms).calculateTeamPower(cached.roster)
     }
 
     private fun getFullTeam(uuid: UUID): String {
@@ -105,6 +107,7 @@ class PlaceholderHandler(private val plugin: TeamX) : PlaceholderExpansion() {
             "{members}" to getTeamMemberUUIDs(uuid),
             "{format}" to (getTeamFormat(uuid)),
             "{team_name}" to teamName,
+            "{tag}" to plugin.teamCacheManager.get(uuid)?.tag.orEmpty(),
             "{description}" to (getTeamDescription(uuid)),
             "{created_at}" to (getTeamCreatedAt(uuid)),
             "{power}" to getTeamPower(uuid).toString()

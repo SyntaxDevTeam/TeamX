@@ -1,4 +1,4 @@
-package pl.syntaxdevteam.teamx.basic
+package pl.syntaxdevteam.teamx.invitations
 
 import java.util.*
 

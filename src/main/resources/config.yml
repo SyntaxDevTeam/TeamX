@@ -1,4 +1,4 @@
-config-version: 101
+config-version: 102
 
 # Default format for new added teams
 default-format: "&8&l"
@@ -7,8 +7,28 @@ default-format: "&8&l"
 team:
   max-name-length: 16
   max-description-length: 64
+  fees:
+    rename: 0.0
+    tag: 0.0
+  home:
+    enabled: true
+    delay-seconds: 5
+    require-plotsx: false
+  chat:
+    enabled: true
+  ping:
+    enabled: true
+    cooldown-seconds: 10
 
 GUI:
+  # Per-button overrides. Indices start at 0. Paginated menu navigation uses fixed slots.
+  panel:
+    ping:
+      material: COMPASS
+      index: 16
+    home:
+      material: ENDER_PEARL
+      index: 14
   # GUI settings with format or color selection
   colors:
     material: PURPLE_WOOL # Any blocks are available
@@ -55,6 +75,7 @@ GUI:
 
 # Available placeholders in the plugin:
 # %teamx_name% - Team name
+# %teamx_tag% - Unique clan tag
 # %teamx_format% - Team format
 # %teamx_leader% - Nickname of the team leader
 # %teamx_member_count% - Number of team members
@@ -72,7 +93,7 @@ Placeholders:
   # Settings for how the member list is displayed in the placeholder
   members_format: newline # Available options: newline, comma
   # Settings for how the team format is displayed in the placeholder
-  # Available format placeholders: {team_name}, {full_name}, {format}, {leader}, {member_count}, {members}, {description}, {created_at}, {power}
+  # Available format placeholders: {team_name}, {tag}, {full_name}, {format}, {leader}, {member_count}, {members}, {description}, {created_at}, {power}
   chat_format:
     solo: "<gray>Solo</gray>"
     team: "<hover:show_text:'{full_name}<reset><newline><newline><b>Leader: </b>{leader}<newline><b>Team count: </b>{member_count}<newline><b>Team members list:</b> {leader}, {members}'>{format}{team_name}</hover>"

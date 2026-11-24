@@ -1,4 +1,4 @@
-package pl.syntaxdevteam.teamx.basic
+package pl.syntaxdevteam.teamx.clans
 
 object TextSanitizer {
     private val legacyColorPattern = "§[0-9a-fk-orx]".toRegex(RegexOption.IGNORE_CASE)

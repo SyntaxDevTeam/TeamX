@@ -2,11 +2,15 @@ package pl.syntaxdevteam.teamx.databases
 
 import pl.syntaxdevteam.syntaxdb.Database
 import pl.syntaxdevteam.syntaxdb.config.DatabaseType
-import net.kyori.adventure.text.Component
 import pl.syntaxdevteam.teamx.TeamX
 import java.io.File
 import java.io.IOException
 import java.sql.*
+import java.util.UUID
+import pl.syntaxdevteam.teamx.clans.ClanMember
+import pl.syntaxdevteam.teamx.clans.ClanRank
+import pl.syntaxdevteam.teamx.clans.Specialization
+import pl.syntaxdevteam.teamx.home.ClanHome
 
 class DatabaseHandler(private val plugin: TeamX) {
     private val logger = plugin.logger
@@ -141,6 +145,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                 statement.executeUpdate(createTeamMembersTable)
                 logger.debug("Table 'team_members' created successfully.")
             }
+            ClanSchema.migrate(conn)
         }
         logger.debug("Table creation operations completed.")
     }
@@ -156,29 +161,23 @@ class DatabaseHandler(private val plugin: TeamX) {
      * @param description
      * @return
      */
-    fun addTeam(name: String, leaderUuid: String, description: String?): Boolean {
-        val cleanName = plugin.messageHandler.getPlainText(Component.text(name))
-        return try {
-            database.withConnection { conn ->
-                logger.debug("Database connection established from addTeam")
-                val query = """
-                INSERT INTO teams (name, leader_uuid, format, created_at, description)
-                VALUES (?, ?, NULL, CURRENT_TIMESTAMP, ?)
-            """.trimIndent()
-                conn.prepareStatement(query).use { preparedStatement ->
-                    preparedStatement.setString(1, cleanName)
-                    preparedStatement.setString(2, leaderUuid)
-                    preparedStatement.setString(3, description)
-                    preparedStatement.executeUpdate()
-                    plugin.logger.debug("Team $name added to the database.")
-                    true
-                }
+    fun addTeam(name: String, leaderUuid: String, description: String?): Boolean =
+        transaction { connection ->
+            val tag = ClanSchema.allocateTag(name, ClanSchema.reservedTags(connection))
+            val id = connection.prepareStatement(
+                "INSERT INTO teams (name, leader_uuid, description, tag) VALUES (?, ?, ?, ?)",
+                Statement.RETURN_GENERATED_KEYS
+            ).use {
+                it.setString(1, name)
+                it.setString(2, leaderUuid)
+                it.setString(3, description)
+                it.setString(4, tag)
+                it.executeUpdate()
+                it.generatedKeys.use { keys -> if (keys.next()) keys.getInt(1) else return@transaction false }
             }
-        } catch (e: SQLException) {
-            plugin.logger.err("Failed to add team $name. ${e.message}")
-            false
+            execute(connection, "INSERT INTO team_members (team_id, player_uuid, role) VALUES (?, ?, 'LEADER')",
+                id, leaderUuid) == 1
         }
-    }
 
     /**
      * Aktualizuje nazwę zespołu w bazie danych.
@@ -189,22 +188,19 @@ class DatabaseHandler(private val plugin: TeamX) {
      * @param newName
      * @return
      */
-    fun updateTeamName(teamId: Int, newName: String): Boolean {
-        val query = "UPDATE teams SET name = ? WHERE id = ?"
-        return try {
-            database.withConnection { conn ->
-                conn.prepareStatement(query).use { preparedStatement ->
-                    preparedStatement.setString(1, newName)
-                    preparedStatement.setInt(2, teamId)
-                    val rowsAffected = preparedStatement.executeUpdate()
-                    rowsAffected > 0
-                }
-            }
-        } catch (e: SQLException) {
-            plugin.logger.err("Failed to update team name for team ID: $teamId. ${e.message}")
-            false
-        }
+    fun updateTeamName(teamId: Int, newName: String, payment: (() -> Boolean)? = null): Boolean =
+        updateIdentity("name", teamId, newName, payment)
+
+    fun updateTeamTag(teamId: Int, input: String, payment: (() -> Boolean)? = null): Boolean {
+        val tag = ClanSchema.normalizeTag(input) ?: return false
+        return updateIdentity("tag", teamId, tag, payment)
     }
+
+    private fun updateIdentity(column: String, teamId: Int, value: String, payment: (() -> Boolean)?): Boolean =
+        transaction { connection ->
+            execute(connection, "UPDATE teams SET $column = ? WHERE id = ? AND $column <> ?", value, teamId, value) == 1 &&
+                (payment?.invoke() ?: true)
+        }
 
     /**
      * Aktualizuje format zespołu w bazie danych.
@@ -283,35 +279,10 @@ class DatabaseHandler(private val plugin: TeamX) {
      * @param byName
      * @return
      */
-    fun removeTeam(teamIdentifier: Int, byName: Boolean = true): Boolean {
-        return try {
-            database.withConnection { conn ->
-                logger.debug("Database connection established from removeTeam")
-                val query = if (byName) {
-                    "DELETE FROM teams WHERE name = ?"
-                } else {
-                    "DELETE FROM teams WHERE id = ?"
-                }
-                conn.prepareStatement(query).use { preparedStatement ->
-                    if (byName) {
-                        preparedStatement.setString(1, teamIdentifier.toString())
-                    } else {
-                        preparedStatement.setInt(1, teamIdentifier)
-                    }
-                    val rowsAffected = preparedStatement.executeUpdate()
-                    if (rowsAffected > 0) {
-                        plugin.logger.debug("Team $teamIdentifier removed from the database.")
-                        true
-                    } else {
-                        plugin.logger.warning("No team found with identifier: $teamIdentifier.")
-                        false
-                    }
-                }
-            }
-        } catch (e: SQLException) {
-            plugin.logger.err("Failed to remove team with identifier: $teamIdentifier. ${e.message}")
-            false
-        }
+    fun removeTeam(teamId: Int): Boolean = transaction { connection ->
+        execute(connection, "DELETE FROM team_homes WHERE team_id = ?", teamId)
+        execute(connection, "DELETE FROM team_members WHERE team_id = ?", teamId)
+        execute(connection, "DELETE FROM teams WHERE id = ?", teamId) == 1
     }
 
     fun getTeamList(): List<String> {
@@ -372,7 +343,8 @@ class DatabaseHandler(private val plugin: TeamX) {
                                 ?: plugin.config.getString("team.default-format")
                                 ?: plugin.config.getString("default-format").orEmpty(),
                             resultSet.getString("created_at"),
-                            resultSet.getString("description").orEmpty()
+                            resultSet.getString("description").orEmpty(),
+                            resultSet.getString("tag").orEmpty()
                         )
                         plugin.logger.debug("Team data retrieved for player UUID: $playerUuid")
                         teamData
@@ -401,7 +373,8 @@ class DatabaseHandler(private val plugin: TeamX) {
                             resultSet.getString("name"),
                             resultSet.getString("leader_uuid"),
                             resultSet.getString("created_at"),
-                            resultSet.getString("description").orEmpty()
+                            resultSet.getString("description").orEmpty(),
+                            resultSet.getString("tag").orEmpty()
                         )
                         plugin.logger.debug("Team data retrieved for team name: $name")
                         teamData
@@ -436,7 +409,7 @@ class DatabaseHandler(private val plugin: TeamX) {
     }
 
     fun removePlayerFromTeam(teamId: Int, playerUuid: String): Boolean {
-        val query = "DELETE FROM team_members WHERE team_id = ? AND player_uuid = ?"
+        val query = "DELETE FROM team_members WHERE team_id = ? AND player_uuid = ? AND role <> 'LEADER'"
         return try {
             database.withConnection { conn ->
                 conn.prepareStatement(query).use { preparedStatement ->
@@ -480,23 +453,104 @@ class DatabaseHandler(private val plugin: TeamX) {
         }
     }
 
-    fun setTeamLeader(teamId: Int, newLeaderUuid: String): Boolean {
-        val query = "UPDATE teams SET leader_uuid = ? WHERE id = ?"
-        return try {
-            database.withConnection { conn ->
-                conn.prepareStatement(query).use { preparedStatement ->
-                    preparedStatement.setString(1, newLeaderUuid)
-                    preparedStatement.setInt(2, teamId)
-                    val rowsAffected = preparedStatement.executeUpdate()
-                    rowsAffected > 0
-                }
-            }
-        } catch (e: SQLException) {
-            plugin.logger.err("Failed to set team leader for team ID: $teamId. ${e.message}")
-            false
+    fun setTeamLeader(teamId: Int, newLeaderUuid: String): Boolean = transaction { connection ->
+        val membership = connection.prepareStatement("SELECT team_id FROM team_members WHERE player_uuid = ?").use {
+            it.setString(1, newLeaderUuid)
+            it.executeQuery().use { row -> if (row.next()) row.getInt(1) else null }
+        }
+        if (membership != null && membership != teamId) return@transaction false
+        if (execute(connection, "UPDATE teams SET leader_uuid = ? WHERE id = ?", newLeaderUuid, teamId) != 1) {
+            return@transaction false
+        }
+        execute(connection, "UPDATE team_members SET role = 'MEMBER' WHERE team_id = ? AND role = 'LEADER'", teamId)
+        if (membership == null) {
+            execute(connection, "INSERT INTO team_members (team_id, player_uuid, role) VALUES (?, ?, 'LEADER')",
+                teamId, newLeaderUuid) == 1
+        } else {
+            execute(connection, "UPDATE team_members SET role = 'LEADER', elite = 0 WHERE team_id = ? AND player_uuid = ?",
+                teamId, newLeaderUuid) == 1
         }
     }
 
+    fun members(teamId: Int): List<ClanMember> = database.withConnection { connection ->
+        connection.prepareStatement("SELECT player_uuid, role, elite, specialization FROM team_members WHERE team_id = ?").use {
+            it.setInt(1, teamId)
+            it.executeQuery().use { rows ->
+                buildList {
+                    while (rows.next()) {
+                        val role = ClanRank.valueOf(rows.getString("role"))
+                        add(ClanMember(UUID.fromString(rows.getString("player_uuid")),
+                            if (role == ClanRank.MEMBER && rows.getInt("elite") == 1) ClanRank.ELITE else role,
+                            rows.getString("specialization")?.let(Specialization::valueOf)))
+                    }
+                }
+            }
+        }
+    }
+
+    fun setRank(teamId: Int, uuid: UUID, rank: ClanRank): Boolean {
+        if (rank == ClanRank.LEADER) return false
+        val storedRank = if (rank == ClanRank.ELITE) ClanRank.MEMBER else rank
+        return transaction {
+            execute(it, "UPDATE team_members SET role = ?, elite = ? WHERE team_id = ? AND player_uuid = ? AND role <> 'LEADER'",
+                storedRank.name, if (rank == ClanRank.ELITE) 1 else 0, teamId, uuid.toString()) == 1
+        }
+    }
+
+    fun setSpecialization(teamId: Int, uuid: UUID, specialization: Specialization?): Boolean = transaction {
+        execute(it, "UPDATE team_members SET specialization = ? WHERE team_id = ? AND player_uuid = ?",
+            specialization?.name, teamId, uuid.toString()) == 1
+    }
+
+    fun getHome(teamId: Int): ClanHome? = database.withConnection { connection ->
+        connection.prepareStatement("SELECT world_uuid, x, y, z, yaw, pitch FROM team_homes WHERE team_id = ?").use {
+            it.setInt(1, teamId)
+            it.executeQuery().use { row ->
+                if (!row.next()) null else ClanHome(UUID.fromString(row.getString(1)), row.getDouble(2),
+                    row.getDouble(3), row.getDouble(4), row.getFloat(5), row.getFloat(6))
+            }
+        }
+    }
+
+    fun setHome(teamId: Int, home: ClanHome?): Boolean = transaction {
+        val deleted = execute(it, "DELETE FROM team_homes WHERE team_id = ?", teamId)
+        if (home == null) deleted == 1
+        else execute(it, "INSERT INTO team_homes (team_id, world_uuid, x, y, z, yaw, pitch) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            teamId, home.world.toString(), home.x, home.y, home.z, home.yaw, home.pitch) == 1
+    }
+
+    fun clanList(): List<Pair<String, String>> = database.withConnection { connection ->
+        connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT name, tag FROM teams ORDER BY name").use { rows ->
+                buildList { while (rows.next()) add(rows.getString(1) to rows.getString(2).orEmpty()) }
+            }
+        }
+    }
+
+    private fun execute(connection: Connection, sql: String, vararg values: Any?): Int =
+        connection.prepareStatement(sql).use { statement ->
+            values.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeUpdate()
+        }
+
+    private fun transaction(action: (Connection) -> Boolean): Boolean = try {
+        database.withConnection { connection ->
+            connection.autoCommit = false
+            try {
+                action(connection).also { success ->
+                    if (success) connection.commit() else connection.rollback()
+                }
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    } catch (failure: SQLException) {
+        logger.err("Clan database operation failed: ${failure.message}")
+        false
+    }
 
     fun getMemberUUIDsByUUID(leaderUuid: String): List<String> {
         val teamId = getTeamIdByLeaderUUID(leaderUuid) ?: return emptyList()
@@ -591,7 +645,7 @@ class DatabaseHandler(private val plugin: TeamX) {
      * The dump file is saved in the `dump` directory inside the plugin's data folder.
      */
     fun exportDatabase() {
-        val tables = listOf("teams", "team_members")
+        val tables = listOf("teams", "team_members", "team_homes")
         try {
             database.withConnection { conn ->
                 val dumpDir = File(plugin.dataFolder, "dump")
@@ -608,7 +662,7 @@ class DatabaseHandler(private val plugin: TeamX) {
                         continue
                     }
 
-                    writer.write("INSERT INTO $table VALUES\n")
+                    writer.write("INSERT INTO $table (" + (1..columnCount).joinToString { metaData.getColumnName(it) } + ") VALUES\n")
                     var first = true
                     while (resultSet.next()) {
                         if (!first) {
@@ -647,25 +701,43 @@ class DatabaseHandler(private val plugin: TeamX) {
      * separated by semicolons.
      */
     fun importDatabase() {
-        val filePath = File(plugin.dataFolder, "dump/backup.sql").absolutePath
+        val file = File(plugin.dataFolder, "dump/backup.sql")
         try {
-            database.withConnection { conn ->
-                val lines = File(filePath).readLines()
-                val statement = conn.createStatement()
-                val sql = StringBuilder()
-                for (line in lines) {
-                    sql.append(line)
-                    if (line.trim().endsWith(";")) {
-                        statement.execute(sql.toString())
-                        sql.setLength(0)
+            val success = transaction { connection ->
+                connection.createStatement().use { statement ->
+                    val sql = StringBuilder()
+                    file.forEachLine { line ->
+                        val normalized = when (line.trim()) {
+                            "INSERT INTO teams VALUES" ->
+                                "INSERT INTO teams (id, name, leader_uuid, format, created_at, description) VALUES"
+                            "INSERT INTO team_members VALUES" ->
+                                "INSERT INTO team_members (id, team_id, player_uuid, role, joined_at) VALUES"
+                            else -> line
+                        }
+                        sql.appendLine(normalized)
+                        if (line.trimEnd().endsWith(';')) {
+                            statement.execute(sql.toString())
+                            sql.setLength(0)
+                        }
+                    }
+                    if (sql.isNotBlank()) error("Incomplete SQL dump")
+                }
+                ClanSchema.migrate(connection)
+                if (dbType == DatabaseType.POSTGRESQL) {
+                    connection.createStatement().use { statement ->
+                        for (table in listOf("teams", "team_members")) {
+                            statement.execute("""
+                                SELECT setval(pg_get_serial_sequence('$table', 'id'),
+                                    COALESCE(MAX(id), 1), COUNT(*) > 0) FROM $table
+                            """.trimIndent())
+                        }
                     }
                 }
-                plugin.logger.success("Database imported from $filePath")
+                true
             }
-        } catch (e: SQLException) {
-            plugin.logger.err("Failed to import database. ${e.message}")
-        } catch (e: IOException) {
-            plugin.logger.err("Failed to read from file. ${e.message}")
+            if (success) plugin.logger.success("Database imported from ${file.absolutePath}")
+        } catch (failure: Exception) {
+            plugin.logger.err("Failed to import database. ${failure.message}")
         }
     }
 }

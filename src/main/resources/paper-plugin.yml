@@ -47,3 +47,8 @@ dependencies:
 
 features:
   debug: true
+
+permissions:
+  teamx.fees.bypass:
+    description: Bypass fees for clan name and tag changes.
+    default: op

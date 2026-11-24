@@ -4,8 +4,13 @@ import org.bukkit.plugin.java.JavaPlugin
 import pl.syntaxdevteam.core.SyntaxCore
 import pl.syntaxdevteam.core.update.HangarSource
 import pl.syntaxdevteam.message.MessageHandler
-import pl.syntaxdevteam.teamx.basic.InvitationManager
-import pl.syntaxdevteam.teamx.cache.ColorCacheHandler
+import pl.syntaxdevteam.teamx.invitations.InvitationManager
+import pl.syntaxdevteam.teamx.clans.ClanOperations
+import pl.syntaxdevteam.teamx.chat.ClanChat
+import pl.syntaxdevteam.teamx.home.ClanTeleport
+import pl.syntaxdevteam.teamx.messages.ClanMessages
+import pl.syntaxdevteam.teamx.ping.ClanPing
+import pl.syntaxdevteam.teamx.gui.ClanMenus
 import pl.syntaxdevteam.teamx.cache.TeamCacheManager
 import pl.syntaxdevteam.teamx.commands.CommandsManager
 import pl.syntaxdevteam.teamx.databases.DatabaseHandler
@@ -22,8 +27,13 @@ class TeamX : JavaPlugin() {
     lateinit var databaseHandler: DatabaseHandler
     lateinit var messageHandler: MessageHandler
     lateinit var hookHandler: HookHandler
-    lateinit var cacheHandler: ColorCacheHandler
     lateinit var invitationManager: InvitationManager
+    lateinit var operations: ClanOperations
+    lateinit var clanMessages: ClanMessages
+    lateinit var clanChat: ClanChat
+    lateinit var clanPing: ClanPing
+    lateinit var clanTeleport: ClanTeleport
+    lateinit var menus: ClanMenus
     lateinit var teamCacheManager: TeamCacheManager
 
     override fun onEnable() {
